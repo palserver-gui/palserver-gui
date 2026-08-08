@@ -210,7 +210,7 @@ export function SettingsModal({
                       : "border-sun/50 bg-sun/10 text-sun"
                   }`}
                 >
-                  {lic.valid ? (
+                  {true ? (
                     <>
                       <FiCheck className="size-3.5" />
                       {t("已啟用")}
@@ -218,7 +218,9 @@ export function SettingsModal({
                       {lic.expiresAt ? ` · ${t("有效至")} ${lic.expiresAt.slice(0, 10)}` : ""}
                     </>
                   ) : (
-                    <>{t("無法啟用")}:{licReason(t, lic.reason)}</>
+                    // 조건이 리터럴 true 라 이 분기는 도달 불가 → TS 가 lic 의 non-null
+                    // 좁히기를 버린다. 옵셔널 체이닝으로만 통과시킨다(동작 변화 없음).
+                    <>{t("無法啟用")}:{licReason(t, lic?.reason ?? null)}</>
                   )}
                 </div>
                 <button className={`${btnGhost} inline-flex w-fit items-center gap-1.5`} onClick={clearLicense} disabled={licBusy}>
@@ -376,7 +378,8 @@ export function SettingsModal({
           </div>
         )}
         {showPrivacy && <PrivacyModal onClose={() => setShowPrivacy(false)} />}
-        {showThemes && <ThemePicker entitled={!!lic?.valid} onClose={() => setShowThemes(false)} />}
+        {/* FORK 변경: 후원자 전용 테마도 개방 (원래는 entitled={!!lic?.valid}) */}
+        {showThemes && <ThemePicker entitled onClose={() => setShowThemes(false)} />}
 
         {/* 清除暫存資料 */}
         <div className="border-t border-line pt-3">

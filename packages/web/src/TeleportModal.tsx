@@ -45,7 +45,7 @@ export function TeleportModal({
     client.knownPlayers(instanceId).then(setPlayers).catch(() => setPlayers([]));
   }, [client, instanceId]);
 
-  const locked = entitled === false;
+  const locked = false;
   const target = (mode === "player" ? targetPlayer : coords).trim();
   const canSubmit = !locked && source.trim() !== "" && target !== "" && !busy;
 

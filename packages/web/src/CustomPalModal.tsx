@@ -116,7 +116,7 @@ export function CustomPalModal({
       defense: String(Math.floor(Math.random() * 101)),
     });
 
-  const locked = entitled === false;
+  const locked = false;
   const canSubmit = useMemo(
     () =>
       !locked &&

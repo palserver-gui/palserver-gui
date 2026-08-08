@@ -63,5 +63,11 @@ export interface LicenseStatus {
  * `lic.features.includes(id)` 的判斷加回來即可。
  */
 export function hasFeature(id: string, lic: Pick<LicenseStatus, "valid" | "features">): boolean {
-  return featureFreeNow(id) || lic.valid;
+  // ── FORK 변경: 후원자 전용 게이트 해제 ────────────────────────────────
+  // 이 포크는 자체 호스팅 전용이라 EARLY_ACCESS_FEATURES 목록을 전부 열어둔다.
+  // 되돌리려면 아래 두 줄을 지우면 원래 판정(`featureFreeNow(id) || lic.valid`)으로
+  // 복귀한다. 업스트림 머지 시 여기서 충돌이 나야 정상이다.
+  void lic;
+  return true;
+  // ─────────────────────────────────────────────────────────────────────
 }

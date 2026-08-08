@@ -60,8 +60,7 @@ Web 端消費:`packages/web/src/GuildsTab.tsx:39`(`client.guildsSnapshot(instanc
 
 - **`PlayerDetailModal.tsx`**(`packages/web/src/PlayerDetailModal.tsx`):
   - 資料來源:兩路合併,不分 tab —— PalDefender REST 即時資料(`client.playerDetail()`,第 67-77 行)與存檔快照(`client.playersSnapshot()` + `client.playerSnapshotProfile()`,`loadSnapshot()` 第 89-125 行)。
-  - 內容分區(`MergedBody`,第 279-381 行,依序):基本資訊格(名稱/公會/UserId/等級/最後上線/金錢) → `GuildPanel`(公會據點,第 422-477 行,對所有人開放) → `SponsorHint`(未解鎖提示,第 341 行) → `StatusPointsPanel`(加點,第 490-511 行,深度內容) → `Progression`(進度:經驗/科技點/頭目/**捕捉帕魯種類**,第 514-535 行,深度內容) → 已解鎖科技(第 348-357 行) → `PalSection`(帕魯清單,第 555-662 行) → `ItemSection`(物品,第 759-835 行)。
-  - **贊助鎖怎麼判斷**:`entitled` 來自 `client.license().then(l => hasFeature("save-slim", l))`(第 79-84 行);`deep = details.show && details.entitled === true`(第 297 行)—— 「詳細資訊」開關(`useDetailsPref()`,localStorage 記憶)疊加贊助狀態,兩者都成立才顯示深度欄位(IV/詞條/離線物品/加點/進度)。未解鎖時開關展開處顯示 `<SponsorHint />`(第 341 行)。
+
 - **`SavesTab.tsx` / `HealthCard`**:沒有獨立 `HealthCard.tsx` 檔案,是 `SavesTab.tsx` 內的一個 function(第 259-460 行)。掃描觸發:`client.startSaveHealth()`(第 314 行)→ 2 秒輪詢 `client.saveHealth()`(第 291-309 行)直到 `phase==="idle"`。結果顯示:世界大小/玩家檔統計文字(第 410-418 行)、`HealthStat` 卡片格(玩家/帕魯/公會/物品容器/掉落物/動態物品,第 419-426 行)、可展開明細(不活躍玩家清單、空公會名單,第 428-452 行)。贊助鎖:`entitled` 同樣走 `hasFeature("save-slim", l)`(第 280 行),鎖住時顯示提示區塊(第 364-369 行)。
 - **實例詳情分頁清單**:定義在 `packages/web/src/tabPrefs.ts`。`Tab` 型別(第 4-17 行)+ `TABS` 陣列(`{id, label}[]`,第 20-33 行,決定顯示順序與 i18n label)。`LOCKED_TABS = ["overview","instance"]`(不可隱藏)。加新分頁的方法:①在 `Tab` union 加新 id;②在 `TABS` 陣列加 `{id, label}`;③在 `packages/web/src/InstanceDetail.tsx` import 對應 Tab 元件並在 render 區塊加 `{tab === "xxx" && <XxxTab .../>}`(仿現有 `saves`/`palstats` 分支,約第 297-369 行);若要贊助鎖,分頁內容元件內部自行判斷 `hasFeature`(參考 `SavesTab`/`PlayerDetailModal` 寫法),不是在 `tabPrefs.ts` 鎖。
 
@@ -71,7 +70,7 @@ Web 端消費:`packages/web/src/GuildsTab.tsx:39`(`client.guildsSnapshot(instanc
 - `hasFeature(id, lic)`(第 55-57 行):`featureFreeNow(id) || lic.valid` —— 單一贊助層級,有效授權解鎖全部清單內功能,無需在 `lic.features` 逐項比對。
 - 兩個現成鎖 UI 範例:
   1. `packages/web/src/SavesTab.tsx:280`(`setEntitled(hasFeature("save-slim", l))`)+ 鎖住提示 `packages/web/src/SavesTab.tsx:364-369`(`FiLock` + 文字 + 指向「設定 → 贊助者識別碼」)。
-  2. `packages/web/src/PlayerDetailModal.tsx:82`(同樣 `hasFeature("save-slim", l)`)+ 鎖住提示直接複用共用元件 `<SponsorHint />`(`packages/web/src/PlayerDetailModal.tsx:341`,元件定義在 `packages/web/src/ui.tsx:170-177`)。
+
 - 新功能(排行榜週報 / 圖鑑收集度)若要贊助鎖,建議在 `features.ts` 的 `EARLY_ACCESS_FEATURES` 加新 id,再套用上述任一寫法。
 
 ## 6. 掃描結果有沒有持久化歷史
@@ -86,4 +85,4 @@ Web 端消費:`packages/web/src/GuildsTab.tsx:39`(`client.guildsSnapshot(instanc
 
 - **伺服器排行榜**:可直接讀 `SavePlayersSummary.players`(`GET .../players-snapshot`,不含 pals 明細,夠算等級/公會排名)按 `level` 或未來加的欄位排序;UI 可放新分頁(`tabPrefs.ts` 加 `Tab`)或掛在既有 `PlayersTab.tsx`。
 - **掃描間差異週報**:需要新增歷史保存(見第 6 節結論),agent 端在 `save-tools.ts` 的 `writeReport`/`writeSnapshot` 前後動手;或另開一支排程比較邏輯。
-- **圖鑑收集完成度(贊助功能)**:save-scan 管線目前無逐物種捕捉資料,需在 `save-health.ts` 的 `Analyzer`(`CharacterSaveParameterMap` case,約第 482-540 行)新增對玩家 `RecordData`/`PalCaptureCount`(或存檔內對應鍵名,需先用 palsav 的 diag/rawdata 對照確認實際欄位路徑,同 `.claude/notes/save-slim-impl.md` 的做法)的欄位擷取,擴充 `SavePlayerProfile`(`packages/shared/src/index.ts:734`)新增欄位,並在 `features.ts` 註冊新 feature id、比照 `SponsorHint`/`hasFeature` 寫法做鎖。
+

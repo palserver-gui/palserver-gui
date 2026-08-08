@@ -17,12 +17,6 @@ Release),agent 純遠端下載無內嵌 fallback、分頁「有新版」徽章�
 翻譯;Tailscale/CGNAT 100.64.0.0/10 放行目錄瀏覽。四語 RELEASE_NOTES 已更新。PR#46/#47 為 PR52 子集,
 建議關閉;PR#42(backend 重構)因舊 base 大衝突暫緩。)
 
-v2.7.0 已發布(2026-07-22:主打贊助者新功能「Discord 官方機器人」—— 同機貼 token 即用(agent 自跑+監督,
-免 Docker/手動註冊指令)、18 支 slash 指令回控伺服器、每分鐘更新的狀態面板、事件通知、管理員白名單;
-也支援進階自架(另機/Docker)+ 第三方 bot 開發者指南 + 完整 Agent REST API 文檔。另一大功能「Webhook
-事件通知」分頁(事件→Discord webhook / 自訂 HTTP + HMAC)。皆為贊助者先行(SponsorLockNotice gating)。
-其他:停止/重啟倒數可取消、傳送選點地圖疊頭目/地標、公會據點與名稱全用戶可見、愛發電贊助管道(簡中查碼 UI)、
-boss-reporter 修正(v1.4/v1.5:捕捉判不在、觀測不可信清舊倒數、野外一律顯示「下個遊戲日」)。四語 RELEASE_NOTES 已更新。)
 
 v2.6.0 已發布(2026-07-19:主打「頭目重生時間」贊助功能對外開放。伺服器端 UE4SS 模組
 PalserverBossReporter v1.3:野外+地城頭目死活/重生;**狀態黏著**(看過活的一直記活、擊殺後倒數

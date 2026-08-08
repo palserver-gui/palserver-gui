@@ -47,7 +47,7 @@ export function GiveItemsModal({
     client.knownPlayers(instanceId).then(setPlayers).catch(() => setPlayers([]));
   }, [client, instanceId]);
 
-  const locked = entitled === false;
+  const locked = false;
   const validRows = rows.filter((r) => r.itemId.trim() !== "");
   const canSubmit = !locked && userId.trim() !== "" && validRows.length > 0 && !busy;
 

@@ -140,7 +140,7 @@ export function BossRespawnTab({
     return () => clearInterval(tick);
   }, []);
 
-  const locked = entitled === false;
+  const locked = false;
 
   // 依所屬世界把回報的 spawner 分兩組(避免主世界/世界樹地圖座標撞號誤配)。
   const reported = status?.state?.bosses ?? [];

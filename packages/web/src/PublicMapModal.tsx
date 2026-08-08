@@ -66,7 +66,7 @@ export function PublicMapModal({
     };
   }, [client, instanceId]);
 
-  const locked = entitled === false;
+  const locked = false;
 
   const patch = async (partial: Partial<PublicMapSettings>) => {
     if (!status) return;

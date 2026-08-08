@@ -178,7 +178,7 @@ export function WebhookSettingsTab({ client, instanceId }: { client: AgentClient
     if (entitled) void refresh();
   }, [entitled, refresh]);
 
-  const locked = entitled === false;
+  const locked = false;
 
   // 贊助者限定:未解鎖只顯示先行版說明,下面的表單/清單一律不顯示、也不預覽。
   if (locked) {

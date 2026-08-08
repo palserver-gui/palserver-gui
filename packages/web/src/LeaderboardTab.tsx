@@ -85,7 +85,7 @@ export function LeaderboardTab({ client, instanceId }: { client: AgentClient; in
 
   const latest = history && history.length > 0 ? history[history.length - 1] : null;
   const prev = history && history.length > 1 ? history[history.length - 2] : null;
-  const locked = entitled === false;
+  const locked = false;
 
   return (
     <div className="flex flex-col gap-4">

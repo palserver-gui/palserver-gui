@@ -91,7 +91,7 @@ export function PalStatsTab({
     void refresh();
   }, [refresh]);
 
-  const locked = entitled === false;
+  const locked = false;
   const row = palId.trim() ? resolveRowCase(defaults, palRowName(palId.trim(), variant)) : "";
   // 該 row 的原版數值(有資料檔才有;給 placeholder 與變體存在性判斷)
   const original = row && defaults ? defaults[row] : undefined;

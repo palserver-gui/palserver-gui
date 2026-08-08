@@ -340,7 +340,7 @@ function HealthCard({
     return "";
   };
 
-  const locked = entitled === false;
+  const locked = false;
   const report = status?.report ?? null;
 
   return (
