@@ -59,6 +59,9 @@ async function getSequential(urls) {
   return out;
 }
 
+/** paldb 未翻譯的欄位會吐佔位字串(例:"ko_Text"、"zh-Hant Text")—— 當成沒有名字。 */
+const realName = (s) => (s && !/(^|[\s_-])Text$/.test(s) ? s : undefined);
+
 /** 把 Next.js 頁面裡的 self.__next_f.push([n,"..."]) 片段解碼拼回完整字串。 */
 function nextFlight(html) {
   let blob = "";
@@ -140,14 +143,16 @@ async function main() {
   }
 
   // ── 詞條 zh(paldb en/tw 位置對應,見檔頭註解;ja 刻意留空) ──
-  const [enPassiveHtml, twPassiveHtml, cnPassiveHtml] = await getSequential([
+  const [enPassiveHtml, twPassiveHtml, cnPassiveHtml, koPassiveHtml] = await getSequential([
     "https://paldb.cc/en/Passive_Skills",
     "https://paldb.cc/tw/Passive_Skills",
     "https://paldb.cc/cn/Passive_Skills",
+    "https://paldb.cc/ko/Passive_Skills",
   ]);
   const enPassiveList = parsePaldbPassiveList(enPassiveHtml);
   const twPassiveList = parsePaldbPassiveList(twPassiveHtml);
   const cnPassiveList = parsePaldbPassiveList(cnPassiveHtml);
+  const koPassiveList = parsePaldbPassiveList(koPassiveHtml);
   const enIndexByName = new Map();
   enPassiveList.forEach((e, i) => {
     if (!enIndexByName.has(e.name)) enIndexByName.set(e.name, i);
@@ -162,6 +167,11 @@ async function main() {
       `[警告] paldb en/cn 詞條卡片數量不一致(en ${enPassiveList.length} / cn ${cnPassiveList.length}),位置對應可能不準,請人工複查。`,
     );
   }
+  if (enPassiveList.length !== koPassiveList.length) {
+    console.warn(
+      `[警告] paldb en/ko 詞條卡片數量不一致(en ${enPassiveList.length} / ko ${koPassiveList.length}),位置對應可能不準,請人工複查。`,
+    );
+  }
 
   const passives = passivesBase.map((p) => {
     const idx = enIndexByName.get(p.name);
@@ -169,12 +179,15 @@ async function main() {
     // 抓來的簡中進上游欄位 zhCN;人工校對的 "zh-CN" 原樣帶過,抓取腳本不寫入。
     const zhCN = (idx !== undefined ? cnPassiveList[idx]?.name : undefined) ?? existingPassives.get(p.id)?.zhCN;
     const reviewed = existingPassives.get(p.id)?.["zh-CN"];
+    // FORK 추가: 한국어도 같은 위치 대응으로 가져온다(카드 수 일치는 위에서 경고로 검사).
+    const ko = realName(idx !== undefined ? koPassiveList[idx]?.name : undefined) ?? existingPassives.get(p.id)?.ko;
     return {
       id: p.id,
       name: p.name,
       ...(zh ? { zh } : {}),
       ...(reviewed ? { "zh-CN": reviewed } : {}),
       ...(zhCN ? { zhCN } : {}),
+      ...(ko ? { ko } : {}),
       rank: p.rank,
     };
   });
@@ -182,17 +195,19 @@ async function main() {
   await writeFile(path.join(DATA_DIR, "passives.json"), JSON.stringify(passives) + "\n");
 
   // ── 主動技(名稱/zh/ja 都靠 EPalWazaID 內部 id 直接對接,不必猜位置) ──
-  const [wazaHtmlEn, wazaHtmlZh, wazaHtmlZhCN, wazaHtmlJa, skillsHtml] = await getSequential([
+  const [wazaHtmlEn, wazaHtmlZh, wazaHtmlZhCN, wazaHtmlJa, wazaHtmlKo, skillsHtml] = await getSequential([
     "https://paldb.cc/en/Active_Skills",
     "https://paldb.cc/tw/Active_Skills",
     "https://paldb.cc/cn/Active_Skills",
     "https://paldb.cc/ja/Active_Skills",
+    "https://paldb.cc/ko/Active_Skills",
     "https://paldeck.cc/skills",
   ]);
   const namesEn = parsePaldbWaza(wazaHtmlEn);
   const namesZh = parsePaldbWaza(wazaHtmlZh);
   const namesZhCN = parsePaldbWaza(wazaHtmlZhCN);
   const namesJa = parsePaldbWaza(wazaHtmlJa);
+  const namesKo = parsePaldbWaza(wazaHtmlKo);
   const elements = parsePaldeckElements(nextFlight(skillsHtml));
   const skills = [];
   const skillSeen = new Set();
@@ -204,6 +219,9 @@ async function main() {
     const zhCN = namesZhCN.get(id) ?? existingSkills.get(id)?.zhCN;
     const reviewed = existingSkills.get(id)?.["zh-CN"];
     const ja = namesJa.get(id);
+    // FORK 추가: 한국어명. paldb 영문 페이지에 이름이 없어 name 이 id 로 폴백되는 항목이
+    // 57개 있는데(upstream 결손), 한국어 페이지에는 이름이 있는 경우가 많다.
+    const ko = realName(namesKo.get(id)) ?? existingSkills.get(id)?.ko;
     const element = elements.get(id);
     skills.push({
       id,
@@ -212,6 +230,7 @@ async function main() {
       ...(reviewed ? { "zh-CN": reviewed } : {}),
       ...(zhCN ? { zhCN } : {}),
       ...(ja ? { ja } : {}),
+      ...(ko ? { ko } : {}),
       ...(element ? { element } : {}),
     });
   }

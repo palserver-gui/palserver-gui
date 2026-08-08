@@ -37,7 +37,7 @@ export function EntityPicker({
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
     const raw = query.trim();
-    // 四語都比對:en(name)/id 不分大小寫,zh(繁)/zhCN(簡)/ja 原樣包含
+    // 五語都比對:en(name)/id 不分大小寫,zh(繁)/zhCN(簡)/ja/ko 原樣包含
     const list = q
       ? catalog.filter(
           (e) =>
@@ -46,7 +46,8 @@ export function EntityPicker({
             e.zh?.includes(raw) ||
             e["zh-CN"]?.includes(raw) ||
             e.zhCN?.includes(raw) ||
-            e.ja?.includes(raw),
+            e.ja?.includes(raw) ||
+            e.ko?.includes(raw),
         )
       : catalog;
     return list.slice(0, 60);

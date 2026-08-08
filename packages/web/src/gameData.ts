@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getLang } from "./i18n";
+import { PREFER_KOREAN_GAME_NAMES } from "./flags";
 
 /** Catalogs of Palworld entities, for labelling IDs and picking icons.
  * Served as static JSON from /game-data (see public/game-data/CREDITS.md).
@@ -16,6 +17,8 @@ export interface GameEntity {
   zhCN?: string;
   /** Japanese name where known(scripts/fetch-game-data-i18n.mjs 由 paldb.cc 抓) */
   ja?: string;
+  /** FORK 추가: 한국어 이름(scripts/fetch-skills-passives.mjs 가 paldb.cc/ko 에서 수집) */
+  ko?: string;
   /** icon filename within the category folder, or a path relative to /game-data */
   icon?: string;
   /** passive-skill rank (詞條 catalog only): 1–5 good, negative = 惡性 */
@@ -24,8 +27,13 @@ export interface GameEntity {
   element?: string;
 }
 
-/** Preferred display name for the current UI language (fallback: English). */
+/** Preferred display name for the current UI language (fallback: English).
+ *
+ * FORK 추가: 이 앱에는 한국어 UI 로케일이 없어 getLang() 이 "ko" 를 돌려주는 일이 없다.
+ * 그래서 PREFER_KOREAN_GAME_NAMES 가 켜져 있으면 UI 언어와 무관하게 게임 고유명사만
+ * 한국어로 보여준다(버튼·라벨 등 UI 문자열은 기존 언어 그대로). 끄면 원래 동작. */
 export const displayName = (e: GameEntity) => {
+  if (PREFER_KOREAN_GAME_NAMES && e.ko) return e.ko;
   const lang = getLang();
   if (lang === "zh") return e.zh ?? e.name;
   if (lang === "zh-CN") return e["zh-CN"] ?? e.zhCN ?? e.zh ?? e.name;

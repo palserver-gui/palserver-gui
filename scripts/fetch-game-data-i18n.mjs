@@ -27,6 +27,8 @@ const LANGS = [
   ["en", "en"],
   ["tw", "zh"],
   ["ja", "ja"],
+  // FORK 추가: 한국어. paldb 미번역 항목은 "-" 나 "ko_Text" 를 뱉으므로 아래 isPlaceholder 로 거른다.
+  ["ko", "ko"],
 ];
 const TECHNOLOGY_LANGS = [
   ["en", "name"],
@@ -34,6 +36,9 @@ const TECHNOLOGY_LANGS = [
   ["cn", "zhCN"],
   ["ja", "ja"],
 ];
+/** paldb 未翻譯欄位的佔位字串("-"、"ko_Text"、"zh-Hant Text"…)—— 當成沒有名字。 */
+const isPlaceholder = (s) => !s || s === "-" || /(^|[\s_-])Text$/.test(s);
+
 const requestedTargets = new Set(process.argv.slice(2));
 const shouldUpdate = (target) => requestedTargets.size === 0 || requestedTargets.has(target);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -56,6 +61,21 @@ function parseNames(html, kind) {
     const id = decodeURIComponent(rawId);
     const name = rawName.replace(/<[^>]*>/g, "").trim();
     if (name && !names.has(id)) names.set(id, name);
+  }
+  return names;
+}
+
+/** FORK: 英文名 → paldb 頁面 slug(空白換底線),href 對應用。 */
+const slugify = (name) => name.trim().replace(/\s+/g, "_");
+
+/** FORK: data-hover 是快取雜湊(沒有內部 ID)的 itemname 連結 —— 用 href 的英文 slug 當鍵。
+ *  例:<a class="itemname" data-hover="/cache/ko/Game_Items_hover/5fa1…" href="Carbon_Fiber">카본 섬유</a> */
+function parseNamesByHref(html) {
+  const names = new Map();
+  const re = /<a class="itemname" data-hover="\/cache\/[^"]*" href="([^"]+)"[^>]*>(.*?)<\/a>/gs;
+  for (const [, href, rawName] of html.matchAll(re)) {
+    const name = rawName.replace(/<[^>]*>/g, "").trim();
+    if (name && !names.has(href)) names.set(href, name);
   }
   return names;
 }
@@ -193,11 +213,20 @@ async function updateCatalog(file, page, kind) {
   const catalog = JSON.parse(await readFile(path.join(DATA_DIR, file), "utf8"));
   const stats = {};
   for (const [site, field] of LANGS) {
-    const names = parseNames(await fetchPage(site, page), kind);
+    const html = await fetchPage(site, page);
+    const names = parseNames(html, kind);
+    // FORK: 색인의 itemname 링크 일부는 data-hover 가 해시 캐시(/cache/<lang>/…)라
+    // 내부 ID 가 없다(2026-08 기준 ko/Items 4281건 중 743건). parseNames 가 통째로
+    // 놓치므로, 그런 항목은 href 의 영문 슬러그로 잡는다. ko 보충 전용.
+    const byHref = field === "ko" ? parseNamesByHref(html) : null;
     let filled = 0;
     let missing = 0;
     for (const entry of catalog) {
-      const name = names.get(entry.id);
+      const name =
+        names.get(entry.id) ??
+        (byHref && entry.name && entry.name !== "-" && entry.name !== entry.id
+          ? byHref.get(slugify(entry.name))
+          : undefined);
       if (!name) {
         // en 欄位是 `name`,一定存在;其他語言缺了就維持原值(fallback 英文)。
         if (field !== "en" && !entry[field]) missing++;
@@ -209,6 +238,13 @@ async function updateCatalog(file, page, kind) {
           entry.name = name;
           filled++;
         }
+      } else if (field === "ko") {
+        // FORK: 佔位字串은 쓰지 않는다(화면에 "ko_Text" 가 그대로 나오는 걸 막는다).
+        if (isPlaceholder(name)) missing++;
+        else if (entry.ko !== name) {
+          if (!entry.ko) filled++;
+          entry.ko = name;
+        }
       } else if (entry[field] !== name) {
         if (!entry[field] || entry[field] === "-") filled++;
         entry[field] = name;
@@ -216,9 +252,9 @@ async function updateCatalog(file, page, kind) {
     }
     stats[field] = { filled, missing };
   }
-  // 欄位順序固定(id, name, icon, zh, "zh-CN", zhCN, ja),diff 才好讀。
+  // 欄位順序固定(id, name, icon, zh, "zh-CN", zhCN, ja, ko),diff 才好讀。
   const ordered = catalog.map(
-    ({ id, name, icon, zh, "zh-CN": reviewed, zhCN, ja, ...rest }) => ({
+    ({ id, name, icon, zh, "zh-CN": reviewed, zhCN, ja, ko, ...rest }) => ({
       id,
       name,
       ...(icon ? { icon } : {}),
@@ -226,6 +262,7 @@ async function updateCatalog(file, page, kind) {
       ...(reviewed ? { "zh-CN": reviewed } : {}),
       ...(zhCN ? { zhCN } : {}),
       ...(ja ? { ja } : {}),
+      ...(ko ? { ko } : {}),
       ...rest,
     }),
   );

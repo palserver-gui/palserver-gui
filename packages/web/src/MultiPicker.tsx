@@ -39,14 +39,15 @@ export function MultiPicker({
     const list = catalog.filter((e) => {
       if (value.includes(e.id)) return false;
       if (!q) return true;
-      // 四語都比對:en(name)/id 不分大小寫,zh(繁)/zhCN(簡)/ja 原樣包含
+      // 五語都比對:en(name)/id 不分大小寫,zh(繁)/zhCN(簡)/ja/ko 原樣包含
       return (
         e.name.toLowerCase().includes(q) ||
         e.id.toLowerCase().includes(q) ||
         e.zh?.includes(raw) ||
         e["zh-CN"]?.includes(raw) ||
         e.zhCN?.includes(raw) ||
-        e.ja?.includes(raw)
+        e.ja?.includes(raw) ||
+        e.ko?.includes(raw)
       );
     });
     return list.slice(0, 60);
