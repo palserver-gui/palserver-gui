@@ -14,6 +14,9 @@ const TYPE_AUTH_RESPONSE = 2;
 const TYPE_EXEC = 2;
 const TYPE_RESPONSE = 0;
 
+/** Idle timeout on the socket: connect, auth and the ordinary commands all
+ * answer within this. Long-running commands (Save on a big world) pass their
+ * own budget through `options.timeoutMs`. */
 const CONNECT_TIMEOUT_MS = 4000;
 /** Responses can span several packets; this is how long we wait for more
  * after the first one arrives. */
@@ -97,16 +100,17 @@ function rconHost(rec: InstanceRecord): string {
 export async function rconExec(
   rec: InstanceRecord,
   command: string,
-  options?: { base64?: boolean },
+  options?: { base64?: boolean; timeoutMs?: number },
 ): Promise<string> {
   requireRcon(rec);
   const port = Number(rec.settings.RCONPort);
   const password = String(rec.settings.AdminPassword);
   const useBase64 = options?.base64 ?? (resolveBase64 ? await resolveBase64(rec) : false);
+  const timeoutMs = options?.timeoutMs ?? CONNECT_TIMEOUT_MS;
 
   return new Promise<string>((resolve, reject) => {
     const socket = net.createConnection({ host: rconHost(rec), port });
-    socket.setTimeout(CONNECT_TIMEOUT_MS);
+    socket.setTimeout(timeoutMs);
 
     let tail: Buffer<ArrayBufferLike> = Buffer.alloc(0);
     const packets: Packet[] = [];
@@ -157,7 +161,9 @@ export async function rconExec(
     socket.on("timeout", () =>
       finish(
         new RconError(
-          authed ? "RCON 指令逾時" : "無法連線到 RCON — 伺服器可能未在運作中",
+          authed
+            ? `RCON 指令逾時(${Math.round(timeoutMs / 1000)} 秒內沒有回應)`
+            : "無法連線到 RCON — 伺服器可能未在運作中",
           503,
         ),
       ),

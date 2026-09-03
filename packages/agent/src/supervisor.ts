@@ -11,6 +11,7 @@ import {
 import type { DriverContext, ServerDriver } from "./driver.js";
 import type { InstanceStore, InstanceRecord } from "./store.js";
 import { rest } from "./restapi.js";
+import { saveWorld } from "./world-save.js";
 import { getPalDefenderConfig } from "./paldefender-config.js";
 import { newestPalDefenderLogLines } from "./native.js";
 import { cachedVersionSummary, refreshImageVersionSummary } from "./version.js";
@@ -567,11 +568,11 @@ export class RestartSupervisor {
           .catch(() => {}); // REST off — restart anyway, just without warning
         await new Promise((r) => setTimeout(r, wait * 1000));
       }
-      // Save and wait for the world to flush to disk. The REST /save
-      // endpoint returns 200 immediately but the actual write is async —
-      // stopping too soon can corrupt save files. We save, then wait a
-      // few seconds before stopping to let the server finish writing.
-      await rest.save(rec).catch(() => {});
+      // Save and wait for the world to flush to disk. saveWorld() blocks
+      // for the flush itself (RCON Save / REST /save, long timeout), but the
+      // server may still be finishing the write when it answers — stopping
+      // too soon can corrupt save files, so settle a few seconds more.
+      await saveWorld(rec).catch(() => {});
       await new Promise((r) => setTimeout(r, 5000));
 
       // Remember the old process's identity (native: pid) before asking it to

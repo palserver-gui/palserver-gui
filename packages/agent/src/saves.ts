@@ -8,7 +8,7 @@ import type { DriverContext } from "./driver.js";
 import type { InstanceRecord } from "./store.js";
 import { configPlatformDir } from "./platform.js";
 import { serverRoot } from "./native.js";
-import { rest } from "./restapi.js";
+import { saveWorld } from "./world-save.js";
 import { execInPod, listDirInPod, readFileInPod, tarDirInPod, untarIntoPod, writeFileInPod } from "./k8s.js";
 
 const execFileP = promisify(execFile);
@@ -482,15 +482,25 @@ function markNewSinceImport(worlds: WorldSave[], ctx: DriverContext): WorldSave[
 }
 
 /** Ask the running server to flush the world first, so the archive isn't
- * a snapshot of half-written state. Silently skipped when REST is off. */
-export async function flushWorld(rec: InstanceRecord): Promise<boolean> {
+ * a snapshot of half-written state. Best-effort: returns the failure reason
+ * (server down, RCON/REST off, save timed out) instead of throwing. */
+export async function flushWorld(rec: InstanceRecord): Promise<{ ok: boolean; error?: string }> {
   try {
-    await rest.save(rec);
-    return true;
-  } catch {
-    return false;
+    await saveWorld(rec);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
+
+/** Left out of backup archives. `backup/` is the server's own rolling
+ * autosave copies (`backup/world/<stamp>`, `backup/local`): on a large world
+ * it is several times the live save and it is exactly what the server is
+ * rewriting while we tar — GNU tar then exits non-zero with "file removed
+ * before we read it" and the whole backup fails. `*.bak` / `world_save_bak`
+ * are transient copies some setups leave beside Level.sav. A restore never
+ * needed any of these: the live world is Level.sav + LevelMeta.sav + Players/. */
+export const BACKUP_TAR_EXCLUDES = ["backup", "world_save_bak", "*.bak"] as const;
 
 export async function createBackup(
   rec: InstanceRecord,
@@ -499,7 +509,7 @@ export async function createBackup(
 ): Promise<BackupInfo> {
   assertWorldGuid(worldGuid);
   requireFileCapable(rec);
-  const flushed = await flushWorld(rec);
+  const flush = await flushWorld(rec);
   fs.mkdirSync(backupsDir(ctx), { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const name = `${worldGuid}__${stamp}.tar.gz`;
@@ -510,7 +520,7 @@ export async function createBackup(
     // must be running for exec to reach a Pod — the caller (scheduler / route)
     // already ensures that, and flushWorld best-effort asks it to save first.
     const worldRel = `${K8S_SAVEGAMES_REL}/${worldGuid}`;
-    const buf = await tarDirInPod(rec, worldRel).catch(() => {
+    const buf = await tarDirInPod(rec, worldRel, [...BACKUP_TAR_EXCLUDES]).catch(() => {
       throw fail(`找不到世界存檔 ${worldGuid}`, 404);
     });
     fs.writeFileSync(archive, buf);
@@ -518,7 +528,11 @@ export async function createBackup(
     const root = savedRoot(rec, ctx);
     const worldDir = path.join(saveGamesDir(root), worldGuid);
     if (!fs.existsSync(worldDir)) throw fail(`找不到世界存檔 ${worldGuid}`, 404);
-    await execFileP("tar", ["-czf", archive, "-C", worldDir, "."], { windowsHide: true });
+    await execFileP(
+      "tar",
+      ["-czf", archive, "-C", worldDir, ...BACKUP_TAR_EXCLUDES.map((e) => `--exclude=${e}`), "."],
+      { windowsHide: true },
+    );
   }
 
   return {
@@ -526,7 +540,8 @@ export async function createBackup(
     worldGuid,
     sizeBytes: fs.statSync(archive).size,
     createdAt: new Date().toISOString(),
-    flushedBeforeBackup: flushed,
+    flushedBeforeBackup: flush.ok,
+    ...(flush.error ? { flushError: flush.error } : {}),
   };
 }
 

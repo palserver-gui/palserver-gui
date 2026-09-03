@@ -120,7 +120,7 @@ export class BackupScheduler {
       lastResult:
         `成功:${backup.name}` +
         (pruned.length > 0 ? `(清除 ${pruned.length} 個舊備份)` : "") +
-        (backup.flushedBeforeBackup ? "" : "(未先存檔:REST API 未啟用)"),
+        (backup.flushedBeforeBackup ? "" : `(未先存檔:${backup.flushError ?? "存檔失敗"})`),
     });
   }
 }

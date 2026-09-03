@@ -640,6 +640,8 @@ export interface BackupInfo {
   createdAt: string;
   /** true when the server flushed the world to disk before archiving */
   flushedBeforeBackup?: boolean;
+  /** why the pre-backup flush failed (RCON/REST off, save timed out, …) */
+  flushError?: string;
 }
 
 /** Scheduled backups of the active world, run by the agent. */
