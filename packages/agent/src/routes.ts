@@ -66,7 +66,7 @@ import * as pakMods from "./pak-mods.js";
 import { getWorkshopModsStatus, setWorkshopGlobalEnabled, setWorkshopModEnabled } from "./workshop-mods.js";
 import { clearPalStats, getPalSchemaStatus, getPalStats, installPalSchema, removePalSchema, writePalStats, setPalSchemaEnabled } from "./palschema.js";
 import { getBossReporterStatus, installBossReporter, removeBossReporter } from "./boss-reporter.js";
-import { getModerationLists, moderation } from "./moderation.js";
+import { banEverywhere, getModerationLists, moderation, unbanEverywhere } from "./moderation.js";
 import { getLiveStatus, rest } from "./restapi.js";
 import { saveWorld } from "./world-save.js";
 import * as files from "./files.js";
@@ -301,9 +301,13 @@ export function registerRoutes(
   const ctxOf = (rec: InstanceRecord): DriverContext => ({
     instanceDir: store.instanceDir(rec.id),
   });
-  setRconBase64Resolver(async (rec) => {
+  /** PalDefender 裝了且沒被停用 —— 決定 RCON 要不要 base64、封鎖要不要同時寫它的名單。 */
+  const isPdActive = async (rec: InstanceRecord): Promise<boolean> => {
     const mod = (await getModsStatus(rec, ctxOf(rec))).paldefender;
-    if (!mod.installed || mod.enabled === false) return false;
+    return mod.installed && mod.enabled !== false;
+  };
+  setRconBase64Resolver(async (rec) => {
+    if (!(await isPdActive(rec))) return false;
     return (await getPalDefenderConfig(rec, ctxOf(rec))).values.RCONbase64 === true;
   });
   const snapshotBefore = async (rec: InstanceRecord, reason: string): Promise<void> => {
@@ -1609,11 +1613,19 @@ export function registerRoutes(
     const body = z
       .object({ value: z.string().min(1).max(100), reason: z.string().max(200).optional() })
       .parse(req.body);
+    // ban/unban 兩套名單一起寫(官方 banlist.txt + PalDefender Banlist.json),
+    // 只寫一套會讓另一套的檢查放人進來、名單卡也對不上。
     switch (action) {
       case "whitelist_add": await moderation.whitelistAdd(rec, body.value); break;
       case "whitelist_remove": await moderation.whitelistRemove(rec, body.value); break;
-      case "ban": await moderation.ban(rec, body.value, body.reason); break;
-      case "unban": await moderation.unban(rec, body.value); break;
+      case "ban": {
+        const out = await banEverywhere(rec, ctxOf(rec), body.value, { pdActive: await isPdActive(rec), message: body.reason });
+        return { ok: true, action, value: body.value, ...out };
+      }
+      case "unban": {
+        const out = await unbanEverywhere(rec, ctxOf(rec), body.value, { pdActive: await isPdActive(rec) });
+        return { ok: true, action, value: body.value, ...out };
+      }
       case "banip": await moderation.banIp(rec, body.value); break;
       case "unbanip": await moderation.unbanIp(rec, body.value); break;
     }
@@ -1639,15 +1651,14 @@ export function registerRoutes(
     const rec = getOr404((req.params as { id: string }).id);
     const { userId } = req.params as { userId: string };
     const { message } = z.object({ message: z.string().max(500).optional() }).parse(req.body ?? {});
-    await rest.ban(rec, userId, message);
-    return { banned: userId };
+    // 官方 REST /ban 只寫 banlist.txt;裝了 PalDefender 就連它的名單一起寫,並 read-back 驗證。
+    return await banEverywhere(rec, ctxOf(rec), userId, { pdActive: await isPdActive(rec), message });
   });
 
   app.post("/api/instances/:id/players/:userId/unban", async (req) => {
     const rec = getOr404((req.params as { id: string }).id);
     const { userId } = req.params as { userId: string };
-    await rest.unban(rec, userId);
-    return { unbanned: userId };
+    return await unbanEverywhere(rec, ctxOf(rec), userId, { pdActive: await isPdActive(rec) });
   });
 
   app.post("/api/instances/:id/save", async (req) => {

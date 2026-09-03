@@ -33,6 +33,8 @@ function PlayerAvatar({ seed, gameData, size = 40 }: { seed: string; gameData: G
 }
 import {
   savToMap,
+  type BanEntry,
+  type BanOutcome,
   type KnownPlayer,
   type LiveStatus,
   type ModerationLists,
@@ -81,6 +83,8 @@ export function PlayersTab({
   const [moderation, setModeration] = useState<ModerationLists>(EMPTY_MODERATION);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // 封鎖/解除之後兩套名單與 read-back 的提示(黃色):動作有送出但某一邊沒落地。
+  const [warning, setWarning] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [detailFor, setDetailFor] = useState<{ id: string; label: string } | null>(null);
 
@@ -185,27 +189,41 @@ export function PlayersTab({
     }
   };
 
-  const playerAction = async (player: RestPlayer, action: "kick" | "ban") => {
-    const verb = action === "kick" ? t("踢出") : t("封鎖");
-    const explain =
-      action === "kick"
-        ? t("踢出只是把他請出伺服器,他可以立刻重新加入(適合請人重連/暫時處置)。")
-        : t("封鎖會把他加入封鎖名單,在你到下方「封鎖名單」按「解除」之前都無法加入。");
-    if (!confirm(explain + "\n\n" + t("確定要{verb}「{name}」嗎?", { verb, name: player.name }))) return;
-    await act(
-      () => client.playerAction(instanceId, player.userId, action, t("你已被{verb}", { verb })),
-      t("已{verb} {name}", { verb, name: player.name }),
-    );
+  /** 封鎖/解除是兩套名單一起寫(官方 banlist.txt + PalDefender),agent 回每一邊的成敗
+   * 與 banlist.txt 的 read-back;只要有一邊沒落地就用黃色提示,不要讓「已封鎖」變成假象。 */
+  const banWarning = (raw: unknown, expectPresent: boolean): string | null => {
+    const o = (raw ?? {}) as Partial<BanOutcome>;
+    const parts: string[] = [];
+    if (o.verified === false) {
+      parts.push(
+        expectPresent
+          ? t("伺服器已回應,但 banlist.txt 裡還沒看到這個 ID — 請留意他是否仍能加入。")
+          : t("伺服器已回應,但 banlist.txt 裡仍有這個 ID。"),
+      );
+    }
+    if (o.paldefender && !o.paldefender.ok) parts.push(t("PalDefender 那邊沒有成功:{error}", { error: o.paldefender.error }));
+    if (o.vanilla && !o.vanilla.ok) parts.push(t("官方 API 那邊沒有成功:{error}", { error: o.vanilla.error }));
+    return parts.length ? parts.join(" ") : null;
   };
 
-  const moderate = (
-    action: "whitelist_add" | "whitelist_remove" | "ban" | "unban",
-    value: string,
-    name: string,
-    verb: string,
-  ) => {
+  const banAct = async (fn: () => Promise<unknown>, success: string, expectPresent: boolean) => {
+    setBusy(true);
+    setError(null);
+    setWarning(null);
+    try {
+      const out = await fn();
+      flash(success);
+      setWarning(banWarning(out, expectPresent));
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const banPlayer = (userId: string, name: string) => {
     if (
-      action === "ban" &&
       !confirm(
         t("封鎖會把他加入封鎖名單,在你到下方「封鎖名單」按「解除」之前都無法加入。") +
           "\n\n" +
@@ -213,6 +231,32 @@ export function PlayersTab({
       )
     )
       return;
+    void banAct(
+      () => client.playerAction(instanceId, userId, "ban", t("你已被{verb}", { verb: t("封鎖") })),
+      t("已{verb} {name}", { verb: t("封鎖"), name }),
+      true,
+    );
+  };
+
+  const unbanPlayer = (userId: string, name: string) =>
+    void banAct(
+      () => client.playerAction(instanceId, userId, "unban"),
+      t("已{verb} {name}", { verb: t("解除封鎖"), name }),
+      false,
+    );
+
+  const playerAction = async (player: RestPlayer, action: "kick" | "ban") => {
+    if (action === "ban") return banPlayer(player.userId, player.name);
+    const verb = t("踢出");
+    const explain = t("踢出只是把他請出伺服器,他可以立刻重新加入(適合請人重連/暫時處置)。");
+    if (!confirm(explain + "\n\n" + t("確定要{verb}「{name}」嗎?", { verb, name: player.name }))) return;
+    await act(
+      () => client.playerAction(instanceId, player.userId, action, t("你已被{verb}", { verb })),
+      t("已{verb} {name}", { verb, name: player.name }),
+    );
+  };
+
+  const moderate = (action: "whitelist_add" | "whitelist_remove", value: string, name: string, verb: string) => {
     void act(() => client.moderate(instanceId, action, value), t("已{verb} {name}", { verb: t(verb), name }));
   };
 
@@ -224,6 +268,11 @@ export function PlayersTab({
     return (
       <div className="flex flex-col gap-4">
         <EmptyState icon={<FiUsers />} title={t("目前無法連線到伺服器的 REST API")}>{live.reason}</EmptyState>
+        {error && <p className={errorCls}>{error}</p>}
+        {notice && (
+          <p className="rounded-xl bg-grass/10 px-3 py-2 text-[13px] font-bold text-grass">{notice}</p>
+        )}
+        {warning && <p className="rounded-xl bg-sun/10 px-3 py-2 text-[13px] font-bold text-sun">{warning}</p>}
         <KnownPlayersCard
           known={known}
           saveByName={saveByName}
@@ -231,9 +280,9 @@ export function PlayersTab({
           client={client}
           instanceId={instanceId}
           onOpen={(id, label) => setDetailFor({ id, label })}
-          bannedIds={moderation.supported ? bannedIds : undefined}
-          onBan={(id, name) => moderate("ban", id, name, "封鎖")}
-          onUnban={(id, name) => moderate("unban", id, name, "解除封鎖")}
+          bannedIds={bannedIds}
+          onBan={banPlayer}
+          onUnban={unbanPlayer}
         />
         <PresenceTimeline events={events} />
         {detailFor && (
@@ -259,6 +308,7 @@ export function PlayersTab({
       {notice && (
         <p className="rounded-xl bg-grass/10 px-3 py-2 text-[13px] font-bold text-grass">{notice}</p>
       )}
+      {warning && <p className="rounded-xl bg-sun/10 px-3 py-2 text-[13px] font-bold text-sun">{warning}</p>}
 
       {metrics && (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -358,14 +408,14 @@ export function PlayersTab({
         client={client}
         instanceId={instanceId}
         onOpen={(id, label) => setDetailFor({ id, label })}
-        bannedIds={moderation.supported ? bannedIds : undefined}
-        onBan={(id, name) => moderate("ban", id, name, "封鎖")}
-        onUnban={(id, name) => moderate("unban", id, name, "解除封鎖")}
+        bannedIds={bannedIds}
+        onBan={banPlayer}
+        onUnban={unbanPlayer}
       />
       <ModerationCard
         moderation={moderation}
         busy={busy}
-        onUnban={(userId) => moderate("unban", userId, userId, "解除封鎖")}
+        onUnban={(userId) => unbanPlayer(userId, userId)}
         onWhitelistRemove={(value) => moderate("whitelist_remove", value, value, "移出白名單")}
       />
       <PresenceTimeline events={events} />
@@ -414,7 +464,7 @@ function KnownPlayersCard({
   client: AgentClient;
   instanceId: string;
   onOpen: (id: string, label: string) => void;
-  /** 封鎖名單中的 userId(PalDefender 未裝時為 undefined → 不顯示封鎖鈕)。 */
+  /** 封鎖名單中的 userId(兩套名單合併)。封鎖走官方 REST /ban,不需要 PalDefender。 */
   bannedIds?: Set<string>;
   onBan?: (userId: string, name: string) => void;
   onUnban?: (userId: string, name: string) => void;
@@ -519,7 +569,13 @@ function KnownPlayersCard({
   );
 }
 
-/** PalDefender whitelist and banlist, when the plugin is installed. */
+const BAN_SOURCE_LABEL: Record<NonNullable<BanEntry["source"]>, string> = {
+  vanilla: "官方名單",
+  paldefender: "PalDefender",
+  both: "兩套名單",
+};
+
+/** 白名單(PalDefender 才有)與封鎖名單(官方 banlist.txt + PalDefender Banlist.json 合併)。 */
 function ModerationCard({
   moderation,
   busy,
@@ -531,9 +587,11 @@ function ModerationCard({
   onUnban: (userId: string) => void;
   onWhitelistRemove: (value: string) => void;
 }) {
-  if (!moderation.supported) return null;
+  // 沒裝 PalDefender 也有官方名單:有封鎖過就把卡片秀出來,不然使用者看不到自己封了誰。
+  if (!moderation.supported && moderation.bans.length === 0) return null;
   return (
     <div className="grid gap-4 sm:grid-cols-2">
+      {moderation.supported && (
       <div className={`${card} p-0`}>
         <h3 className="flex items-center justify-between border-b-2 border-line px-5 py-3 text-sm font-extrabold text-ink-muted">
           <span>{t("白名單")}({moderation.whitelist.length})</span>
@@ -573,6 +631,7 @@ function ModerationCard({
           </div>
         )}
       </div>
+      )}
 
       <div className={`${card} p-0`}>
         <h3 className="border-b-2 border-line px-5 py-3 text-sm font-extrabold text-ink-muted">
@@ -591,6 +650,11 @@ function ModerationCard({
                     <p className="font-mono text-xs break-all">IP {b.ip}</p>
                   )}
                   {b.reason && <p className="text-xs text-ink-muted">{t("原因:")}{b.reason}</p>}
+                  {b.source && (
+                    <p className="text-xs text-ink-muted" title={t("兩套名單彼此獨立;「兩套名單」代表官方 banlist.txt 與 PalDefender 都有。")}>
+                      {t(BAN_SOURCE_LABEL[b.source])}
+                    </p>
+                  )}
                 </div>
                 {b.userId && (
                   <button

@@ -408,6 +408,22 @@ export interface BanEntry {
   userId: string | null;
   ip: string | null;
   reason?: string;
+  /** 這筆封鎖記在哪一套名單:遊戲本體的 banlist.txt(vanilla)、PalDefender 的
+   * Banlist.json(paldefender)、或兩邊都有(both)。兩套名單彼此獨立,連線時各自檢查。 */
+  source?: BanSource;
+}
+
+export type BanSource = "vanilla" | "paldefender" | "both";
+
+/** 封鎖/解除封鎖的結果:兩條路徑各自成敗,加上 banlist.txt 的 read-back。 */
+export interface BanOutcome {
+  userId: string;
+  /** 官方 REST /ban(寫 Pal/Saved/SaveGames/banlist.txt) */
+  vanilla: { ok: true } | { ok: false; error: string };
+  /** PalDefender RCON ban(寫 Banlist.json);null = 未安裝 PalDefender,沒有嘗試 */
+  paldefender: { ok: true; response: string } | { ok: false; error: string } | null;
+  /** banlist.txt read-back:true = 看到這個 ID;false = 檔案讀得到但沒有;null = 讀不到檔 */
+  verified: boolean | null;
 }
 
 export interface ModerationLists {

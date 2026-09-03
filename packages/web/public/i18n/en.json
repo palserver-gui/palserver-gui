@@ -1960,7 +1960,11 @@
   "無人公會:標出": "Ghost guilds: highlight those with no member active in the last",
   "日內無任何公會成員上線": "days",
   "無人公會": "No active members",
-  "{n} 天前": "{n} days ago",
-  "今天": "Today",
-  "未知": "Unknown"
+  "伺服器已回應,但 banlist.txt 裡還沒看到這個 ID — 請留意他是否仍能加入。": "The server responded, but this ID is not in banlist.txt yet — check whether they can still join.",
+  "伺服器已回應,但 banlist.txt 裡仍有這個 ID。": "The server responded, but this ID is still in banlist.txt.",
+  "PalDefender 那邊沒有成功:{error}": "PalDefender side failed: {error}",
+  "官方 API 那邊沒有成功:{error}": "Official API side failed: {error}",
+  "官方名單": "Game ban list",
+  "兩套名單": "Both lists",
+  "兩套名單彼此獨立;「兩套名單」代表官方 banlist.txt 與 PalDefender 都有。": "The two lists are independent; \"Both lists\" means the ID is in the game's banlist.txt and in PalDefender."
 }
