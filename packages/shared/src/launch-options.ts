@@ -16,7 +16,7 @@ export type LaunchOptionCategory = "perf" | "general";
 export interface LaunchOptionMeta {
   /** 命令列旗標名(不含前導 -)。 */
   arg: string;
-  type: "bool" | "int" | "enum";
+  type: "bool" | "int" | "enum" | "text";
   /** 值缺省(未設定)時的行為。 */
   default: boolean | number | string;
   category: LaunchOptionCategory;
@@ -56,6 +56,16 @@ export const LAUNCH_OPTIONS = {
     arg: "logformat", type: "enum", default: "text", choices: ["text", "json"], category: "general",
     label: "日誌格式(logformat)",
   },
+  enableGamedataApi: {
+    arg: "enable-gamedata-api", type: "bool", default: false, category: "general",
+    label: "啟用遊戲資料 API(enable-gamedata-api)",
+    hint: "v1.0.3 起官方提供的 GET /game-data 端點,走 REST API 埠;需同時開啟 REST API。",
+  },
+  extraArgs: {
+    arg: "", type: "text", default: "", category: "general",
+    label: "額外啟動參數",
+    hint: "以空白分隔、原樣附加到啟動命令列,例如 -flagA -flagB=1。給上面沒列出的旗標用;請勿重複 -port / -queryport。",
+  },
 } as const satisfies Record<string, LaunchOptionMeta>;
 
 export type LaunchOptionKey = keyof typeof LAUNCH_OPTIONS;
@@ -69,6 +79,11 @@ export const LAUNCH_CATEGORY_LABELS: Record<LaunchOptionCategory, string> = {
   general: "啟動參數",
 };
 
+/** 把「額外啟動參數」文字切成 argv token(空白分隔、去空字串)。 */
+export function splitExtraArgs(text: string): string[] {
+  return text.split(/\s+/).map((s) => s.trim()).filter(Boolean);
+}
+
 /** 由 launchOptions 組出命令列參數(不含 -port / -queryport,那兩個由呼叫端另外加)。 */
 export function buildLaunchArgs(opts: LaunchOptions | undefined): string[] {
   const o = opts ?? {};
@@ -81,6 +96,9 @@ export function buildLaunchArgs(opts: LaunchOptions | undefined): string[] {
     } else if (meta.type === "int") {
       const n = Math.trunc(Number(v));
       if (Number.isFinite(n) && n > 0) args.push(`-${meta.arg}=${n}`);
+    } else if (meta.type === "text") {
+      // 自由文字:以空白切成獨立 argv token 原樣附加(不經 shell,無注入問題)。
+      if (typeof v === "string") args.push(...splitExtraArgs(v));
     } else {
       // enum:只有和預設不同才帶(避免多餘參數)。
       if (typeof v === "string" && v && v !== meta.default) args.push(`-${meta.arg}=${v}`);

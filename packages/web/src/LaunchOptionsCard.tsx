@@ -168,7 +168,7 @@ function OptionRow({
     <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 py-3">
       <div className="min-w-64 flex-1">
         <p className="text-sm font-bold">{t(meta.label)}</p>
-        <p className="font-mono text-xs text-ink-muted">{optionKey}</p>
+        {meta.arg && <p className="font-mono text-xs text-ink-muted">{optionKey}</p>}
         {meta.hint && <p className="mt-1 max-w-xl text-xs text-ink-muted">{t(meta.hint)}</p>}
         {meta.warn && (
           <p className="mt-1 inline-flex max-w-xl items-start gap-1.5 text-xs text-sun">
@@ -203,6 +203,16 @@ function OptionRow({
               const n = Number(e.target.value);
               if (!Number.isNaN(n)) onChange(Math.trunc(n));
             }}
+          />
+        )}
+        {meta.type === "text" && (
+          <input
+            type="text"
+            className={`${inputCls} w-72 font-mono`}
+            value={String(value)}
+            placeholder="-flagA -flagB=1"
+            spellCheck={false}
+            onChange={(e) => onChange(e.target.value)}
           />
         )}
         {meta.type === "enum" && (
