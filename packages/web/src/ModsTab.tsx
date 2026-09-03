@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { FiPackage, FiFolder, FiTrash2, FiAlertTriangle } from "react-icons/fi";
-import type { ModComponent, ModsStatus } from "@palserver/shared";
+import type { ModComponent, ModsStatus, WorkshopModsStatus } from "@palserver/shared";
 import type { AgentClient } from "./api";
 import { FileBrowserDialog } from "./FileManager";
 import { ModInstallCard } from "./ModInstallCard";
@@ -55,6 +55,7 @@ export function ModsTab({
   // 各元件最新穩定版(「有新版」徽章);null=查詢失敗或尚未載入
   const [latest, setLatest] = useState<{ ue4ss: string | null; paldefender: string | null } | null>(null);
   const [pakMods, setPakMods] = useState<{ name: string; size: number; enabled: boolean }[]>([]);
+  const [workshop, setWorkshop] = useState<WorkshopModsStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [browsing, setBrowsing] = useState<string | null>(null);
@@ -63,12 +64,14 @@ export function ModsTab({
 
   const refresh = useCallback(async () => {
     try {
-      const [modStatus, pakList] = await Promise.allSettled([
+      const [modStatus, pakList, workshopStatus] = await Promise.allSettled([
         client.mods(instanceId),
         client.listPakMods(instanceId),
+        client.workshopMods(instanceId),
       ]);
       if (modStatus.status === "fulfilled") setMods(modStatus.value);
       if (pakList.status === "fulfilled") setPakMods(pakList.value.mods);
+      if (workshopStatus.status === "fulfilled") setWorkshop(workshopStatus.value);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -237,6 +240,24 @@ export function ModsTab({
         />
       )}
 
+      {workshop?.supported && (
+        <WorkshopModCard
+          status={workshop}
+          busy={!!busy}
+          onBrowse={() => setBrowsing(workshop.workshopDir ?? "Mods/Workshop")}
+          onToggle={async (packageName, enabled) => {
+            try { setBusy(packageName); setWorkshop(await client.toggleWorkshopMod(instanceId, packageName, enabled)); }
+            catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+            finally { setBusy(null); }
+          }}
+          onToggleGlobal={async (enabled) => {
+            try { setBusy("workshop-global"); setWorkshop(await client.setWorkshopGlobal(instanceId, enabled)); }
+            catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+            finally { setBusy(null); }
+          }}
+        />
+      )}
+
       <PakModCard
         pakMods={pakMods}
         busy={!!busy}
@@ -253,6 +274,105 @@ export function ModsTab({
           finally { setBusy(null); }
         }}
       />
+    </div>
+  );
+}
+
+function Switch({ on, onChange, disabled, label }: { on: boolean; onChange: () => void; disabled?: boolean; label?: string }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+      onClick={onChange}
+      disabled={disabled}
+      className={`relative h-7 w-12 shrink-0 rounded-full transition disabled:opacity-50 ${on ? "bg-grass" : "bg-line"}`}
+    >
+      <span className={`absolute top-1 size-5 rounded-full bg-white shadow transition-all ${on ? "left-6" : "left-1"}`} />
+    </button>
+  );
+}
+
+/** Steam Workshop 模組卡片(官方 1.0 模組系統;僅 native Windows)。
+ *  開關寫 Mods/PalModSettings.ini 的 ActiveModList / bGlobalEnableMod,重啟伺服器後生效。 */
+function WorkshopModCard({
+  status,
+  busy,
+  onBrowse,
+  onToggle,
+  onToggleGlobal,
+}: {
+  status: WorkshopModsStatus;
+  busy: boolean;
+  onBrowse: () => void;
+  onToggle: (packageName: string, enabled: boolean) => Promise<void>;
+  onToggleGlobal: (enabled: boolean) => Promise<void>;
+}) {
+  useI18n();
+  return (
+    <div className={card}>
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <FiPackage className="size-5 text-pal" />
+        <h3 className="text-sm font-extrabold">{t("Steam Workshop 模組(官方模組系統)")}</h3>
+        <span className="rounded-full bg-pal/10 px-2 py-0.5 text-[11px] font-bold text-pal">{t("僅 Windows")}</span>
+        <button className={`${btnGhost} ml-auto inline-flex items-center gap-1.5`} onClick={onBrowse}>
+          <FiFolder className="size-4" /> {t("開啟 Workshop 資料夾")}
+        </button>
+      </div>
+      <p className="mb-3 break-words text-[13px] text-ink-muted">
+        {t(
+          "在客戶端訂閱後,把 Steam/steamapps/workshop/content/1623730/<ID>/ 底下的模組資料夾複製到伺服器的 {dir},這裡就會列出。只有 Info.json 標 IsServer 的模組在伺服器上有作用;開關改動後重啟伺服器生效。",
+          { dir: status.workshopDir ?? "Mods/Workshop" },
+        )}
+      </p>
+      {!status.iniExists && (
+        <p className="mb-3 text-xs text-ink-muted">
+          {t("PalModSettings.ini 尚未生成(伺服器首次啟動後會自動建立);切換開關時會先建一份。")}
+        </p>
+      )}
+      <div className="flex items-center justify-between gap-3 border-b border-line pb-3">
+        <span className="text-sm font-bold">{t("模組總開關(bGlobalEnableMod)")}</span>
+        <Switch on={status.globalEnabled} disabled={busy} label={t("模組總開關(bGlobalEnableMod)")} onChange={() => void onToggleGlobal(!status.globalEnabled)} />
+      </div>
+      {status.mods.length === 0 && status.orphanActive.length === 0 ? (
+        <EmptyState compact>{t("尚無 Workshop 模組。用「開啟 Workshop 資料夾」上傳模組資料夾(內含 Info.json)。")}</EmptyState>
+      ) : (
+        <div className="flex flex-col divide-y divide-line">
+          {status.mods.map((m) => (
+            <div key={m.packageName} className="flex items-center justify-between gap-3 py-2.5">
+              <div className="min-w-0">
+                <p className="flex flex-wrap items-center gap-2 text-sm font-bold">
+                  <span className="truncate">{m.name}</span>
+                  {m.version && <span className="text-xs font-normal text-ink-muted">v{m.version}</span>}
+                  {!m.isServer && (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full bg-sun/15 px-2 py-0.5 text-[11px] font-bold text-sun"
+                      title={t("Info.json 的 InstallRule 沒有 IsServer:true,伺服器不會載入這個模組")}
+                    >
+                      <FiAlertTriangle className="size-3" /> {t("非伺服器模組")}
+                    </span>
+                  )}
+                </p>
+                <p className="truncate font-mono text-xs text-ink-muted">
+                  {m.packageName}
+                  {m.author && <span className="ml-2 font-sans">{m.author}</span>}
+                </p>
+              </div>
+              <Switch on={m.enabled} disabled={busy} label={m.name} onChange={() => void onToggle(m.packageName, !m.enabled)} />
+            </div>
+          ))}
+          {status.orphanActive.map((pkg) => (
+            <div key={`orphan-${pkg}`} className="flex items-center justify-between gap-3 py-2.5">
+              <div className="min-w-0">
+                <p className="truncate font-mono text-sm font-bold">{pkg}</p>
+                <p className="text-xs text-sun">{t("ActiveModList 有列、但 Workshop 資料夾找不到這個模組")}</p>
+              </div>
+              <Switch on disabled={busy} label={pkg} onChange={() => void onToggle(pkg, false)} />
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

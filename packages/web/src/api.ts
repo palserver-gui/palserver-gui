@@ -62,6 +62,7 @@ import type {
   WebhookDelivery,
   WebhookFormat,
   WorldSettings,
+  WorkshopModsStatus,
 } from "@palserver/shared";
 
 export interface Connection {
@@ -1002,6 +1003,27 @@ export class AgentClient {
   /** Pak mod 列表（跨平台）。 */
   listPakMods(id: string): Promise<{ mods: { name: string; size: number; enabled: boolean }[] }> {
     return this.request(`/api/instances/${id}/pak-mods`);
+  }
+
+  /** Steam Workshop 模組狀態(官方模組系統;僅 native Windows)。 */
+  workshopMods(id: string): Promise<WorkshopModsStatus> {
+    return this.request(`/api/instances/${id}/workshop-mods`);
+  }
+
+  /** 啟停單一 Workshop 模組(寫 PalModSettings.ini 的 ActiveModList)。 */
+  toggleWorkshopMod(id: string, packageName: string, enabled: boolean): Promise<WorkshopModsStatus> {
+    return this.request(`/api/instances/${id}/workshop-mods/toggle`, {
+      method: "POST",
+      body: JSON.stringify({ packageName, enabled }),
+    });
+  }
+
+  /** Workshop 模組總開關(bGlobalEnableMod)。 */
+  setWorkshopGlobal(id: string, enabled: boolean): Promise<WorkshopModsStatus> {
+    return this.request(`/api/instances/${id}/workshop-mods/global`, {
+      method: "POST",
+      body: JSON.stringify({ enabled }),
+    });
   }
 
   /** 啟停 pak mod。 */
