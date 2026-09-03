@@ -67,7 +67,6 @@ import { clearPalStats, getPalSchemaStatus, getPalStats, installPalSchema, remov
 import { getBossReporterStatus, installBossReporter, removeBossReporter } from "./boss-reporter.js";
 import { getModerationLists, moderation } from "./moderation.js";
 import { getLiveStatus, rest } from "./restapi.js";
-import { saveWorld } from "./world-save.js";
 import * as files from "./files.js";
 import {
   deletePathInPodBrowser,
@@ -1633,8 +1632,8 @@ export function registerRoutes(
 
   app.post("/api/instances/:id/save", async (req) => {
     const rec = getOr404((req.params as { id: string }).id);
-    const { via } = await saveWorld(rec);
-    return { saved: true, via };
+    await rest.save(rec);
+    return { saved: true };
   });
 
   const LogSourceSchema = z.enum(["agent", "game", "paldefender"]);
