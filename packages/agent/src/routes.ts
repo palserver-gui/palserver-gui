@@ -72,6 +72,7 @@ import { saveWorld } from "./world-save.js";
 import * as files from "./files.js";
 import {
   deletePathInPodBrowser,
+  downloadFileInPodBrowser,
   listDirInPodBrowser,
   makeDirInPodBrowser,
   readFileInPodBrowser,
@@ -2744,6 +2745,29 @@ export function registerRoutes(
     const { path: rel } = PathQuery.parse(req.query);
     if (rec.backend === "k8s") return readFileInPodBrowser(rec, rel);
     return files.readFile(files.fileRoot(rec, ctxOf(rec)), rel);
+  });
+
+  /** Download one file from the instance file browser without buffering native files in memory. */
+  app.get("/api/instances/:id/files/download", async (req, reply) => {
+    const rec = getOr404((req.params as { id: string }).id);
+    const { path: rel } = z.object({ path: z.string().min(1).max(500) }).parse(req.query);
+    const downloadHeaders = (filename: string, size: number) => {
+      const asciiFilename = filename.replace(/[\\\\\"\r\n]/g, "_").replace(/[^\x20-\x7e]/g, "_") || "download";
+      const encodedFilename = encodeURIComponent(filename).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+      reply.header("content-type", "application/octet-stream");
+      reply.header("content-disposition", `attachment; filename="${asciiFilename}"; filename*=UTF-8''${encodedFilename}`);
+      reply.header("content-length", String(size));
+      reply.header("x-content-type-options", "nosniff");
+    };
+    if (rec.backend === "k8s") {
+      const content = await downloadFileInPodBrowser(rec, rel);
+      downloadHeaders(path.posix.basename(rel), content.length);
+      return content;
+    }
+    const file = files.downloadFilePath(files.fileRoot(rec, ctxOf(rec)), rel);
+    const stat = await fs.promises.stat(file);
+    downloadHeaders(path.basename(file), stat.size);
+    return fs.createReadStream(file);
   });
 
   app.put("/api/instances/:id/files/content", async (req) => {
