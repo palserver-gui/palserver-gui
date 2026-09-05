@@ -1059,6 +1059,21 @@ export class AgentClient {
     return this.request(`/api/instances/${id}/files/content?path=${encodeURIComponent(path)}`);
   }
 
+  async downloadFile(id: string, path: string): Promise<Blob> {
+    const res = await fetch(`${this.conn.url}/api/instances/${id}/files/download?path=${encodeURIComponent(path)}`, {
+      headers: { Authorization: `Bearer ${this.conn.token}` },
+    });
+    if (res.status === 401) {
+      this.onUnauthorized?.();
+      throw new Error("unauthorized");
+    }
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+    }
+    return res.blob();
+  }
+
   writeFile(id: string, path: string, content: string): Promise<{ saved: string }> {
     return this.request(`/api/instances/${id}/files/content`, {
       method: "PUT",
