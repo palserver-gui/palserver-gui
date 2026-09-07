@@ -38,10 +38,12 @@ export function PalDefenderTab({
   client,
   instanceId,
   running,
+  backend,
 }: {
   client: AgentClient;
   instanceId: string;
   running: boolean;
+  backend: "native" | "docker" | "k8s";
 }) {
   useI18n();
   const [status, setStatus] = useState<PalDefenderConfigStatus | null>(null);
@@ -67,7 +69,12 @@ export function PalDefenderTab({
     setVerBusy("toggle");
     setError(null);
     try {
-      setMods(await client.setModEnabled(instanceId, "paldefender", mods.paldefender.enabled === false));
+      const next = await client.setModEnabled(instanceId, "paldefender", mods.paldefender.enabled === false);
+      setMods(next);
+      // docker/k8s:操作當下伺服器在運行中,新狀態要重啟才載入——明示生效語意(AC-03)。
+      if (backend !== "native") {
+        setNotice(t(next.paldefender.enabled === false ? "已停用,重啟伺服器後生效。" : "已啟用,重啟伺服器後生效。"));
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -164,6 +171,7 @@ export function PalDefenderTab({
       installed={!!mods?.paldefender.installed}
       version={mods?.paldefender.version}
       running={running}
+      requiresStopped={backend === "native"}
       busy={verBusy !== null}
       busyLabel={t("安裝中…")}
       onInstall={() => void installVersion("stable")}
@@ -171,7 +179,7 @@ export function PalDefenderTab({
       enabled={mods?.paldefender.enabled}
       onToggleEnabled={() => void toggleEnabled()}
       latestVersion={latest?.paldefender}
-      note={<>{t("「玩家細節(查看帕魯/背包)」需要 v1.8.0 以上;召喚、閒置據點清理與內建 Discord 推送需要 v1.9.0 以上。")}{t("安裝或更新後,重啟伺服器才會生效。")}</>}
+      note={<>{t("「玩家細節(查看帕魯/背包)」需要 v1.8.0 以上;召喚、閒置據點清理與內建 Discord 推送需要 v1.9.0 以上。")}{t("安裝、更新或停用後,重啟伺服器才會生效。")}</>}
     />
   );
 

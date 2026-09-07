@@ -15,6 +15,7 @@ export function ModInstallCard({
   installed,
   version,
   running,
+  requiresStopped = true,
   busy,
   busyLabel,
   onInstall,
@@ -37,6 +38,9 @@ export function ModInstallCard({
   version?: string | null;
   /** 伺服器運作中:安裝/移除類動作停用並提示先停止。 */
   running: boolean;
+  /** 操作前提:native 的 DLL 被執行中程序鎖定 → 需先停止(true,預設);
+   *  docker/k8s 靠 exec 寫容器/Pod → 反而需要運行中(false),操作後重啟生效。 */
+  requiresStopped?: boolean;
   /** 任一動作進行中(停用整排按鈕)。 */
   busy: boolean;
   busyLabel?: string;
@@ -59,6 +63,16 @@ export function ModInstallCard({
   children?: React.ReactNode;
 }) {
   useI18n();
+  // 鎖定語意依後端分流:native 運行中鎖(DLL 鎖定);docker/k8s 停機鎖(無容器可 exec)。
+  // runLocked 是「純運行狀態鎖」(不含 busy)——tooltip 文案只看它,否則 busy 期間
+  // (native 安裝中)會誤顯「請先停止伺服器」(違反 native 行為不變紅線)。
+  const runLocked = requiresStopped ? running : !running;
+  const locked = busy || runLocked;
+  const lockTitle = requiresStopped
+    ? t("請先停止伺服器")
+    : running
+      ? t("重啟伺服器後生效")
+      : t("請先啟動伺服器");
   return (
     <div className={`${card} flex flex-wrap items-center justify-between gap-3`}>
       <div className="inline-flex min-w-0 flex-wrap items-center gap-2">
@@ -89,8 +103,8 @@ export function ModInstallCard({
           <button
             className={`${btn} inline-flex items-center gap-1.5`}
             onClick={onInstall}
-            disabled={busy || running}
-            title={running ? t("請先停止伺服器") : installTitle}
+            disabled={locked}
+            title={runLocked ? lockTitle : installTitle}
           >
             <FiDownload className="size-4" />
             {busy
@@ -104,8 +118,8 @@ export function ModInstallCard({
           <button
             className={`${btnGhost} inline-flex items-center gap-1.5`}
             onClick={onInstallBeta}
-            disabled={busy || running}
-            title={running ? t("請先停止伺服器") : t("安裝最新測試版(含較新功能,可能不穩定)")}
+            disabled={locked}
+            title={runLocked ? lockTitle : t("安裝最新測試版(含較新功能,可能不穩定)")}
           >
             {t("安裝測試版")}
           </button>
@@ -114,10 +128,10 @@ export function ModInstallCard({
           <button
             className={`${btnGhost} inline-flex items-center gap-1.5`}
             onClick={onToggleEnabled}
-            disabled={busy || running}
+            disabled={locked}
             title={
-              running
-                ? t("請先停止伺服器")
+              runLocked
+                ? lockTitle
                 : enabled === false
                   ? t("重新啟用(把 DLL 改回原名)")
                   : t("暫時停用不刪檔:改版後模組不相容時的安全退路,Lua/設定檔都會保留")

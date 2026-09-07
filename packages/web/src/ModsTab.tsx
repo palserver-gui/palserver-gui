@@ -42,21 +42,25 @@ export function ModsTab({
   client,
   instanceId,
   running,
+  backend,
   onModsChanged,
 }: {
   client: AgentClient;
   instanceId: string;
   running: boolean;
+  backend: "native" | "docker" | "k8s";
   /** 安裝/移除模組後通知外層(讓 PalDefender 分頁的 gating 同步)。 */
   onModsChanged?: () => void;
 }) {
   useI18n();
+  const requiresStopped = backend === "native";
   const [mods, setMods] = useState<ModsStatus | null>(null);
   // 各元件最新穩定版(「有新版」徽章);null=查詢失敗或尚未載入
   const [latest, setLatest] = useState<{ ue4ss: string | null; paldefender: string | null } | null>(null);
   const [pakMods, setPakMods] = useState<{ name: string; size: number; enabled: boolean }[]>([]);
   const [workshop, setWorkshop] = useState<WorkshopModsStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [browsing, setBrowsing] = useState<string | null>(null);
   // 安裝下載超過 10 秒:多半是舊版遺留的殭屍 PalServer 佔用檔案擋住覆蓋,跳黃色警告提示處理。
@@ -113,6 +117,10 @@ export function ModsTab({
     setError(null);
     try {
       setMods(await client.setModEnabled(instanceId, component, enabled));
+      // docker/k8s:操作當下伺服器在運行中,新狀態要重啟才載入——明示生效語意(AC-03)。
+      if (!requiresStopped) {
+        setNotice(t(enabled === false ? "已停用,重啟伺服器後生效。" : "已啟用,重啟伺服器後生效。"));
+      }
       onModsChanged?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -161,6 +169,7 @@ export function ModsTab({
     <div className="flex flex-col gap-4">
       {slowInstall && <SlowInstallWarning onClose={() => setSlowInstall(false)} />}
       {error && <p className={errorCls}>{error}</p>}
+      {notice && <p className="rounded-xl bg-grass/10 px-3 py-2 text-[13px] font-bold text-grass">{notice}</p>}
       <DismissibleWarning id="warn-mods-compat">
         <span className="inline-flex items-start gap-2">
           <FiAlertTriangle className="mt-0.5 size-4 shrink-0" />
@@ -169,9 +178,14 @@ export function ModsTab({
           </span>
         </span>
       </DismissibleWarning>
-      {running && (
+      {running && requiresStopped && (
         <p className="rounded-xl bg-sun/10 px-3 py-2 text-[13px] font-bold text-sun">
           {t("伺服器運作中:安裝、更新或移除模組需要先停止伺服器(執行中時模組檔案被鎖定)。")}
+        </p>
+      )}
+      {!running && !requiresStopped && (
+        <p className="rounded-xl bg-sun/10 px-3 py-2 text-[13px] font-bold text-sun">
+          {t("伺服器未運行:docker/k8s 的模組安裝與停用需要容器在運行中才能傳輸檔案,請先啟動伺服器。")}
         </p>
       )}
       <ModInstallCard
@@ -180,13 +194,14 @@ export function ModsTab({
         installed={mods.ue4ss.installed}
         version={mods.ue4ss.version}
         running={running}
+        requiresStopped={requiresStopped}
         busy={busy === "ue4ss"}
         onInstall={() => void install("ue4ss")}
         onInstallBeta={() => void install("ue4ss", "beta")}
         enabled={mods.ue4ss.enabled}
         onToggleEnabled={() => void setComponentEnabled("ue4ss", mods.ue4ss.enabled === false)}
         latestVersion={latest?.ue4ss}
-        note={t("安裝或更新後,重啟伺服器才會生效。")}
+        note={t("安裝、更新或停用後,重啟伺服器才會生效。")}
       />
       <div className={card}>
         <div className="mb-2 flex items-center justify-between gap-2">

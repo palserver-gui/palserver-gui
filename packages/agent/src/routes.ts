@@ -1404,7 +1404,7 @@ export function registerRoutes(
     if (rec.backend === "native" && await isRunning(rec)) {
       return reply.code(409).send({ error: "請先停止伺服器再停用或啟用模組(執行中時 DLL 被鎖定)" });
     }
-    setModEnabled(rec, ctxOf(rec), component, enabled);
+    await setModEnabled(rec, ctxOf(rec), component, enabled);
     return getModsStatus(rec, ctxOf(rec));
   });
 

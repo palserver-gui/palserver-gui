@@ -652,11 +652,12 @@ export function InstanceDetailPage({
           client={client}
           instanceId={detail.id}
           running={detail.status === "running"}
+          backend={detail.backend}
           onModsChanged={checkPalDefender}
         />
       )}
       {tab === "paldefender" && (
-        <PalDefenderTab client={client} instanceId={detail.id} running={detail.status === "running"} />
+        <PalDefenderTab client={client} instanceId={detail.id} running={detail.status === "running"} backend={detail.backend} />
       )}
       {tab === "palstats" && <PalStatsTab client={client} instanceId={detail.id} running={detail.status === "running"} />}
       {SHOW_BOSS_RESPAWN && tab === "bossrespawn" && <BossRespawnTab client={client} instanceId={detail.id} running={detail.status === "running"} />}
