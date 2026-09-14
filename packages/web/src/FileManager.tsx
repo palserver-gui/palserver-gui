@@ -6,6 +6,7 @@ import {
   FiTrash2,
   FiFolderPlus,
   FiEdit2,
+  FiDownload,
   FiChevronRight,
   FiRefreshCw,
 } from "react-icons/fi";
@@ -98,6 +99,27 @@ export function FileManager({
     }
   };
 
+  const download = async (entry: DirEntry) => {
+    if (entry.isDir) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const blob = await client.downloadFile(instanceId, joinPath(dir, entry.name));
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = entry.name;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const segments = dir ? dir.split("/") : [];
 
   return (
@@ -174,6 +196,16 @@ export function FileManager({
                   {entry.isDir ? "—" : fmtSize(entry.size)}
                 </span>
                 <div className="flex shrink-0 gap-1.5">
+                  {!entry.isDir && (
+                    <button
+                      className="rounded-full border-[1.5px] border-line px-3 py-1 text-xs font-bold text-ink transition hover:border-pal"
+                      onClick={() => download(entry)}
+                      disabled={busy}
+                      title={t("下載")}
+                    >
+                      <FiDownload className="inline size-3.5" /> {t("下載")}
+                    </button>
+                  )}
                   {entry.editable && (
                     <button
                       className="rounded-full border-[1.5px] border-line px-3 py-1 text-xs font-bold text-ink transition hover:border-pal"
