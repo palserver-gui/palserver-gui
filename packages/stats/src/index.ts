@@ -1,5 +1,6 @@
 /**
- * palserver 匿名使用統計收集端(Cloudflare Worker + D1)。
+ * palserver 匿名使用統計收集端(Node + SQLite,部署在 Zeabur;前身是 Cloudflare Worker + D1)。
+ * HTTP 伺服器與 DB 開檔在 server.ts,這裡只有 fetch 風格的路由與處理邏輯。
  *
  *   POST /api/event  — agent 回報匿名事件(見下方 EVENT_TYPES)
  *   GET  /api/stats  — 公開的全球彙總數字(前端與任何人都能查)
@@ -8,18 +9,20 @@
  * 詳見 repo 根目錄的 PRIVACY.md。
  */
 
-import { ADMIN_HTML } from "./admin-page";
+import { createHash } from "node:crypto";
+import { ADMIN_HTML } from "./admin-page.ts";
+import type { Db } from "./db.ts";
 
 export interface Env {
-  DB: D1Database;
+  DB: Db;
   GITHUB_REPO: string;
-  /** 選填(wrangler secret put GITHUB_TOKEN):GitHub API 匿名請求常被限流,
+  /** 選填(Zeabur 環境變數 GITHUB_TOKEN):GitHub API 匿名請求常被限流,
    * 放一個唯讀 fine-grained token 可穩定抓下載數。 */
   GITHUB_TOKEN?: string;
-  /** 發/管理贊助者識別碼的管理密鑰(wrangler secret put ADMIN_TOKEN)。
+  /** 發/管理贊助者識別碼的管理密鑰(Zeabur 環境變數 ADMIN_TOKEN)。
    * 沒設時 /api/license/issue 與 /reset 一律拒絕。 */
   ADMIN_TOKEN?: string;
-  /** Buy Me a Coffee webhook 簽章密鑰(wrangler secret put BMC_WEBHOOK_SECRET)。 */
+  /** Buy Me a Coffee webhook 簽章密鑰(Zeabur 環境變數 BMC_WEBHOOK_SECRET)。 */
   BMC_WEBHOOK_SECRET?: string;
   /** 愛發電(Afdian/ifdian.net)開發者頁的 user_id 與 API Token。
    *  webhook 本身沒有簽章,收到通知後必須用 Token 算 sign 回打 query-order 驗真,
@@ -31,7 +34,7 @@ export interface Env {
   /** 選填:愛發電開放 API 網域,預設 https://afdian.com(舊域 afdian.net 已停用);
    *  帳號在 ifdian.net 可覆寫成 https://ifdian.net。三者同一套系統。 */
   AFDIAN_API_BASE?: string;
-  /** Brevo(app.brevo.com)交易信 API key(wrangler secret put BREVO_API_KEY);沒設就不寄碼(仍會建碼)。 */
+  /** Brevo(app.brevo.com)交易信 API key(Zeabur 環境變數 BREVO_API_KEY);沒設就不寄碼(仍會建碼)。 */
   BREVO_API_KEY?: string;
   /** 寄件信箱(需先在 Brevo 驗證寄件者/網域),預設 palserver-gui@iosoftware.ai。 */
   BREVO_FROM_EMAIL?: string;
@@ -95,7 +98,11 @@ export default {
     }
     return json({ error: "not found" }, 404);
   },
-} satisfies ExportedHandler<Env>;
+};
+
+/** 來源 IP,只拿來做節流(雜湊後才落地)。由 server.ts 依反向代理標頭算好後寫進
+ *  X-Client-IP,並先清掉客戶端自己帶的同名標頭,這裡可以直接信任。 */
+const clientIp = (req: Request) => req.headers.get("X-Client-IP") ?? "unknown";
 
 interface EventBody {
   installId?: unknown;
@@ -274,8 +281,7 @@ async function handleMapPublish(req: Request, env: Env): Promise<Response> {
 
   if (!existing) {
     // 新 id:先擋濫用註冊,再寫入。
-    const ip = req.headers.get("CF-Connecting-IP") ?? "unknown";
-    const ipHash = await sha256Hex(ip);
+    const ipHash = await sha256Hex(clientIp(req));
     const regCount = await env.DB.prepare(
       "SELECT COUNT(*) AS n FROM map_reg WHERE ip_hash = ?1 AND created_at >= ?2",
     )
@@ -806,7 +812,7 @@ async function sendCodeEmail(
   code: string,
   lang: Lang = "en",
 ): Promise<{ sent: boolean; error?: string }> {
-  if (!env.BREVO_API_KEY) return { sent: false, error: "BREVO_API_KEY 未設定(worker 上沒有這個 secret)" };
+  if (!env.BREVO_API_KEY) return { sent: false, error: "BREVO_API_KEY 未設定(伺服器上沒有這個環境變數)" };
   const s = EMAIL_I18N[lang] ?? EMAIL_I18N.en;
   try {
     // Brevo 交易信 API(https://developers.brevo.com/reference/sendtransacemail)。
@@ -927,10 +933,9 @@ async function handleBmcWebhook(req: Request, env: Env): Promise<Response> {
 
 const AFDIAN_DAYS_PER_MONTH = 31; // 每月給 31 天(含小寬限),month 直接相乘
 
-/** Cloudflare Workers 的 crypto.subtle 以擴充形式支援 "MD5"。愛發電 sign 用 MD5。 */
+/** 愛發電 sign 用 MD5(Web Crypto 標準不含 MD5,走 node:crypto)。 */
 async function md5Hex(s: string): Promise<string> {
-  const buf = await crypto.subtle.digest("MD5", new TextEncoder().encode(s));
-  return Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
+  return createHash("md5").update(s).digest("hex");
 }
 
 interface AfdianOrder {
@@ -1019,7 +1024,7 @@ async function processAfdianOrder(env: Env, order: AfdianOrder): Promise<AfdianR
         .first<{ expires_at: string | null }>();
       return { code: done.code, expiresAt: lic?.expires_at ?? nowIso, action: "already" };
     }
-    // 有 claim row 但 code 仍為 null:前一次執行 claim 後、回填 code 前被中止(worker eviction 等)。
+    // 有 claim row 但 code 仍為 null:前一次執行 claim 後、回填 code 前被中止(程序重啟等)。
     // 不能回 order-not-found 讓這筆永久卡死 —— 往下補跑發碼/續期,完成後回填 code 自救。
     // (極少數情況下前次已延長效期才中止,補跑會多加一次月份 —— 偏向付費者且罕見,可接受。)
   }
@@ -1085,8 +1090,7 @@ const AFDIAN_RATE_RETENTION_MS = 2 * 60 * 60 * 1000;
  *  擋惡意刷爆我們對愛發電的查單子請求(燒 API 配額 / 觸發 token 被限流)。回 true=已超額該擋。
  *  per-IP:攻擊者只限到自己 IP,愛發電推送與真實用戶查碼各自獨立不受影響。記本次並順手清過期。 */
 async function afdianRateLimited(req: Request, env: Env): Promise<boolean> {
-  const ip = req.headers.get("CF-Connecting-IP") ?? "unknown";
-  const ipHash = await sha256Hex("afdian:" + ip);
+  const ipHash = await sha256Hex("afdian:" + clientIp(req));
   const now = Date.now();
   const c = await env.DB.prepare("SELECT COUNT(*) AS n FROM afdian_reg WHERE ip_hash = ?1 AND created_at >= ?2")
     .bind(ipHash, now - AFDIAN_RATE_WINDOW_MS)

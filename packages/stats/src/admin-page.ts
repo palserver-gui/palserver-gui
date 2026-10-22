@@ -1,5 +1,5 @@
 /**
- * 授權管理後台(單頁,worker 的 GET /admin 直接吐這串 HTML)。
+ * 授權管理後台(單頁,GET /admin 直接吐這串 HTML)。
  * 頁面本身公開;所有操作都要在頁內輸入 ADMIN_TOKEN,呼叫 /api/license/* 時帶
  * X-Admin-Token(存在 sessionStorage,關掉分頁即清)。
  *
@@ -120,7 +120,7 @@ export const ADMIN_HTML = `<!doctype html>
 
   <div id="gate" class="card gate">
     <h2>管理員登入</h2>
-    <p class="hint">輸入 worker 的 ADMIN_TOKEN。只存在這個分頁(sessionStorage),不會上傳。</p>
+    <p class="hint">輸入伺服器的 ADMIN_TOKEN。只存在這個分頁(sessionStorage),不會上傳。</p>
     <label>ADMIN_TOKEN</label>
     <input id="tok" type="password" placeholder="貼上 ADMIN_TOKEN" onkeydown="if(event.key==='Enter')unlock()" />
     <div class="row" style="margin-top:14px"><button class="btn" onclick="unlock()">解鎖</button></div>

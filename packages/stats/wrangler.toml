@@ -1,24 +1,10 @@
-# palserver 匿名使用統計 Worker。部署步驟見 README.md。
+# 已退役:統計後端 2026-10 搬到 Zeabur(Node + SQLite,見 README.md),Worker 已不存在。
+# 這個檔只留著讓 wrangler 找得到舊 D1(備份),例如再匯出一次:
+#   npx wrangler d1 export palserver-stats --remote --output=data/d1-export.sql
+# 不要再 `wrangler deploy`:src/ 現在是 Node 程式,不能跑在 Workers 上。
 name = "palserver-stats"
-main = "src/index.ts"
 compatibility_date = "2026-07-01"
 
-# 對外走自訂網域:*.workers.dev 在中國大陸線路被 DNS 污染連不上。
-# workers.dev 舊網址由 legacy-proxy/ 轉發,舊版 agent 仍可用。
-routes = [
-  { pattern = "stats.iosoftware.ai", custom_domain = true }
-]
-
-# GUI 下載數的來源 repo(GitHub Releases 公開統計)。
-[vars]
-GITHUB_REPO = "io-software-ai/palserver-gui"
-# 愛發電只認這個包月方案的訂單才發碼(¥60/月方案;plan_id 是公開資料)。
-AFDIAN_PLAN_IDS = "bd3bee5c838611f1bbe052540025c377"
-# 愛發電開放 API 網域:舊域 afdian.net 已停用(DNS 解不到),用 ifdian.net(與 afdian.com 同系統)。
-AFDIAN_API_BASE = "https://ifdian.net"
-
-# 先 `wrangler d1 create palserver-stats`,把回傳的 database_id 填進來,
-# 再 `pnpm db:schema` 建表。
 [[d1_databases]]
 binding = "DB"
 database_name = "palserver-stats"

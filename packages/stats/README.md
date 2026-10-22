@@ -1,7 +1,11 @@
 # @palserver/stats — 匿名使用統計後端
 
-Cloudflare Worker + D1,收集 palserver GUI 的匿名使用統計(隱私原則見根目錄
-[PRIVACY.md](../../PRIVACY.md)),並彙總 GitHub Releases 下載數。
+Node + SQLite(部署在 Zeabur 東京),收集 palserver GUI 的匿名使用統計(隱私原則見根目錄
+[PRIVACY.md](../../PRIVACY.md)),並彙總 GitHub Releases 下載數;同時負責贊助者識別碼與公開地圖快照。
+
+> 2026-10 從 Cloudflare Worker + D1 搬過來。處理邏輯([src/index.ts](src/index.ts))沒變,
+> [src/db.ts](src/db.ts) 是 node:sqlite 上的 D1 相容層,[src/server.ts](src/server.ts) 是 HTTP 入口。
+> 舊 D1(`palserver-stats`)仍留在 Cloudflare 帳號裡當備份,`wrangler.toml` 只為了能再匯出它。
 
 ## 端點
 
@@ -13,32 +17,63 @@ Cloudflare Worker + D1,收集 palserver GUI 的匿名使用統計(隱私原則�
 | `GET` | `/api/map/snapshot` | 公開讀取地圖快照(viewer 頁用) |
 | `POST` | `/api/map/unpublish` | 服主下架地圖快照 |
 
-## 部署(一次性)
+## 部署(Zeabur)
+
+| 項目 | 值 |
+| --- | --- |
+| 伺服器 | Ming's Server(騰訊雲 Tokyo,43.167.172.26) |
+| Project | `palserver-stats`(`6ad99f2379815446417f79ce`) |
+| Service | `palserver-stats`(`6ad99f3241d0e9b6bfde82c3`) |
+| 網域 | `stats.iosoftware.ai`(正式)、`palserver-stats.zeabur.app` |
+| Volume | `data` 掛在 `/data`;DB 檔 `/data/palserver-stats.sqlite`(環境變數 `DB_PATH`) |
+| DNS | Cloudflare:`stats` A → `43.167.172.26`,**DNS only(灰雲)** |
+
+> DNS 不能開 Cloudflare 代理(橘雲):節流用的來源 IP 取 Zeabur 入口附加在 `X-Forwarded-For` 的最後一段,
+> 前面多一層代理就會變成 Cloudflare 節點的 IP。直連東京也是這次搬家的目的(中國線路連 Cloudflare 不穩)。
+
+Dockerfile 建置,零執行期依賴(Node 24 內建 `node:sqlite`,直接跑 `.ts`)。開機時自動套
+`schema.sql`(全是 `IF NOT EXISTS`),改 schema 後重新部署即可。
+
+**重新部署**:`zeabur deploy` 會把整個目錄打包上傳,`data/`(DB 備份)與 `.env` 不能跟著上去,
+所以從只含必要檔案的暫存目錄部署,且**一定要帶 `--service-id`**(不帶會多建一個新服務):
 
 ```bash
 cd packages/stats
-npx wrangler login                        # 登入 Cloudflare 帳號
-npx wrangler d1 create palserver-stats    # 建 D1,把回傳的 database_id 填進 wrangler.toml
-pnpm db:schema                            # 建表(schema.sql)
-pnpm deploy                               # 部署 worker
+tmp=$(mktemp -d) && cp -r Dockerfile .dockerignore package.json schema.sql src "$tmp/" && cd "$tmp"
+npx zeabur@latest deploy --project-id 6ad99f2379815446417f79ce --service-id 6ad99f3241d0e9b6bfde82c3 -i=false
 ```
 
-部署完成會得到 `https://palserver-stats.<你的帳號>.workers.dev`(也可在
-Cloudflare 後台綁自訂網域)。**把這個網址更新到兩個地方:**
+本機開發:`DB_PATH=./data/stats.sqlite pnpm dev`(預設埠 8080)。
 
-1. `packages/agent/src/env.ts` 的 `STATS_URL` 預設值
-2. `packages/web/src/stats.ts` 的 `STATS_URL`
+端點網址寫在 `packages/agent/src/env.ts`、`packages/web/src/stats.ts` 與官網;agent 端也可用環境變數
+`PALSERVER_STATS_URL` 覆寫。
 
-agent 端也可用環境變數 `PALSERVER_STATS_URL` 覆寫,不改码就能切換端點。
+### 環境變數
 
-## GitHub 下載數抓不到(downloads: null)?
+在 Zeabur 服務的 Variables 設定(`npx zeabur@latest variable update --id <service-id> -k "K=V" -y -i=false`,
+改完要 restart)。Git Bash 下設含 `/` 開頭的值要先 `export MSYS_NO_PATHCONV=1`,否則路徑會被改寫。
 
-GitHub API 對匿名請求限流,Cloudflare Workers 的共用出口 IP 很容易踩到。
-放一個唯讀 token 即可穩定:
+| 變數 | 用途 |
+| --- | --- |
+| `ADMIN_TOKEN` | 管理後台/發碼/解綁(本機副本在 `packages/stats/.env`,已 gitignore) |
+| `DB_PATH` | SQLite 檔路徑 |
+| `BMC_WEBHOOK_SECRET` | Buy Me a Coffee webhook 簽章密鑰 |
+| `AFDIAN_USER_ID` / `AFDIAN_TOKEN` | 愛發電開發者頁的 user_id 與 API Token |
+| `BREVO_API_KEY` | 寄贊助碼信 |
+| `GITHUB_TOKEN` | 選填,GitHub 下載數 API 限流時用(fine-grained PAT,public repo 唯讀) |
+| `GITHUB_REPO` / `AFDIAN_PLAN_IDS` / `AFDIAN_API_BASE` | 選填,預設值見 `src/server.ts` |
+| `RESTORE_URL` | 只在搬家時用:DB 檔不存在時先下載這個 SQL dump 匯入,匯完即刪 |
+
+### 備份與還原
 
 ```bash
-npx wrangler secret put GITHUB_TOKEN   # 貼上 fine-grained PAT(只需 public repo 唯讀)
+pnpm db:backup   # = bash backup.sh:在容器裡 VACUUM INTO 快照 → gzip → 分段拉回 data/,驗 integrity 與筆數
 ```
+
+搬家後沒有 D1 的 Time Travel 了,改 schema 或大動作前先跑一次。
+
+還原/搬家:把 SQL dump 放到一個暫時可下載的網址,設 `RESTORE_URL` 並把 `DB_PATH` 指到一個還不存在的檔名,
+restart 後服務會先匯入再開機(匯入到暫存檔、成功才改名,不會留下半套 DB)。
 
 ## 公開地圖快照
 
@@ -61,7 +96,7 @@ npx wrangler secret put GITHUB_TOKEN   # 貼上 fine-grained PAT(只需 public r
 
 ## 贊助者識別碼(先行版授權)
 
-同一個 worker 也負責發/驗贊助者識別碼(一機一碼)。端點:
+同一個服務也負責發/驗贊助者識別碼(一機一碼)。端點:
 
 - `POST /api/license/activate {code, machineId}` — agent 用,驗證 + 首次綁機器(公開)
 - `POST /api/license/issue {count?, trialDays?, expiresAt?, sponsor?, features?}` — 發碼(需 `X-Admin-Token`);`count` 可一次多張,`trialDays` = 啟用後 N 天(試用碼,兌換當下才起算到期)
@@ -74,18 +109,16 @@ npx wrangler secret put GITHUB_TOKEN   # 貼上 fine-grained PAT(只需 public r
 
 ### 管理後台 UI
 
-`GET /admin`(例:`https://palserver-stats.iosoftware.workers.dev/admin`)是一個發碼/管理的網頁介面:
+`GET /admin`(`https://stats.iosoftware.ai/admin`)是一個發碼/管理的網頁介面:
 輸入 `ADMIN_TOKEN` 後可**大量發試用碼**(數量、啟用後 N 天 / 固定到期 / 永久、活動標籤)、
 複製 / 下載 CSV,並在表格裡檢視、解綁、撤銷。頁面公開但所有操作都要 Token,Token 只存在該分頁。
 
 > 新增 `trial_days` 欄位:舊 DB 需 `ALTER TABLE licenses ADD COLUMN trial_days INTEGER;`(見 schema.sql)。
 
 ```bash
-# 管理密鑰(發碼/解綁用)
-npx wrangler secret put ADMIN_TOKEN
-
+# 管理密鑰 = Zeabur 環境變數 ADMIN_TOKEN(本機副本在 .env)
 # 手動發一張碼(帶 expiresAt 即為月費;到期後 agent 重驗會鎖上)
-curl -X POST https://palserver-stats.iosoftware.workers.dev/api/license/issue \
+curl -X POST https://stats.iosoftware.ai/api/license/issue \
   -H "X-Admin-Token: <ADMIN_TOKEN>" -H "Content-Type: application/json" \
   -d '{"sponsor":"某人","expiresAt":"2026-09-01"}'
 ```
@@ -93,16 +126,11 @@ curl -X POST https://palserver-stats.iosoftware.workers.dev/api/license/issue \
 ### 接 Buy Me a Coffee 月費
 
 1. BMC 開一個月費 **Membership** 方案。
-2. BMC 後台 → Webhooks 新增,URL 填 `https://<worker>/api/license/bmc-webhook`,複製**簽章密鑰**。
-3. 設密鑰;Brevo(app.brevo.com)用來把碼 email 給贊助者(需先在 Brevo 驗證寄件者/網域):
-
-   ```bash
-   npx wrangler secret put BMC_WEBHOOK_SECRET   # BMC 給的 webhook secret
-   npx wrangler secret put BREVO_API_KEY        # Brevo API key(SMTP & API → API Keys）
-   # 寄件者可用環境變數覆寫(預設 palserver GUI <palserver-gui@iosoftware.ai>),例:
-   #   [vars] BREVO_FROM_EMAIL = "palserver-gui@iosoftware.ai"
-   #   [vars] BREVO_FROM_NAME  = "palserver GUI"
-   ```
+2. BMC 後台 → Webhooks 新增,URL 填 `https://stats.iosoftware.ai/api/license/bmc-webhook`,複製**簽章密鑰**。
+3. 在 Zeabur 設環境變數;Brevo(app.brevo.com)用來把碼 email 給贊助者(需先在 Brevo 驗證寄件者/網域):
+   - `BMC_WEBHOOK_SECRET`:BMC 給的 webhook secret
+   - `BREVO_API_KEY`:Brevo API key(SMTP & API → API Keys)
+   - 選填 `BREVO_FROM_EMAIL` / `BREVO_FROM_NAME`(預設 palserver GUI <palserver-gui@iosoftware.ai>)
 
 流程:會員 `membership.started` → 建碼並 email 給贊助者;`membership.updated`(續訂)→ 延長效期;
 `cancelled` / `paused` → 不再續期,當期到期後停用。webhook 會先用 `x-signature-sha256`
@@ -116,28 +144,17 @@ curl -X POST https://palserver-stats.iosoftware.workers.dev/api/license/issue \
 把**同一張碼**的效期往後累加(找不到才發新碼);交付走**自助查碼頁**(贊助者貼訂單號換碼)。
 
 1. 愛發電開發者頁(`https://ifdian.net/dashboard/dev` 或 `afdian.com`):
-   - **Webhook URL** 填 `https://<worker>/api/license/afdian-webhook`(可按「發送測試」,我方一律回 `{"ec":200}`;
+   - **Webhook URL** 填 `https://stats.iosoftware.ai/api/license/afdian-webhook`(可按「發送測試」,我方一律回 `{"ec":200}`;
      測試用的是假訂單號,驗不過屬正常、不會發碼,顯示成功即代表端點通)。
    - 記下 **user_id**、按「生成 Token」拿 **API Token**。
-2. 設 secrets:
-
-   ```bash
-   npx wrangler secret put AFDIAN_USER_ID   # 開發者頁的 user_id
-   npx wrangler secret put AFDIAN_TOKEN      # 開發者頁生成的 API Token
-   # 選填:只認特定包月方案(逗號分隔 plan_id);未設=所有常規方案(product_type=0)都算贊助
-   #   [vars] AFDIAN_PLAN_IDS = "planid1,planid2"
-   # API 網域:舊域 afdian.net 已停用(DNS 解不到),預設走 afdian.com;帳號在 ifdian.net 用它:
-   #   [vars] AFDIAN_API_BASE = "https://ifdian.net"
-   ```
+2. 在 Zeabur 設環境變數 `AFDIAN_USER_ID`(開發者頁的 user_id)與 `AFDIAN_TOKEN`(開發者頁生成的 API Token)。
+   `AFDIAN_PLAN_IDS`(只認的包月方案 plan_id,逗號分隔)與 `AFDIAN_API_BASE`(舊域 afdian.net 已停用)
+   的預設值在 `src/server.ts`,目前是 ¥60/月方案與 `https://ifdian.net`。
 
 3. 方案說明請引導贊助者:贊助後到 GUI **設定 → 贊助者識別碼 → 從愛發電領取識別碼**,貼上訂單號換碼
    (前端此入口只在 UI 語言切到**簡體中文**時顯示)。
 
 > `AFDIAN_USER_ID` / `AFDIAN_TOKEN` 任一沒設,webhook 與 redeem 一律拒絕(不無驗證發碼)。
-> 遷移:schema.sql 對既有 `licenses` 表的 `CREATE IF NOT EXISTS` 是 no-op、加 `ext_id` 欄的那行是註解,
-> 所以既有 DB 要**先手動加欄再跑 schema**(否則 ext_id 唯一索引會因缺欄失敗):
-> `wrangler d1 execute palserver-stats --remote --command "ALTER TABLE licenses ADD COLUMN ext_id TEXT;"`
-> 然後 `pnpm db:schema` 建 `afdian_orders` / `afdian_reg` 表與索引。
 > query-order 回查路徑(webhook 驗真、redeem 未命中)有 per-IP 節流(60 次/小時),擋惡意刷爆 API 配額。
 
 ### 管理 CLI(`manage.mjs`)
@@ -146,17 +163,13 @@ BMC 後台那個「新增 webhook」要手動做(BMC 沒有建 webhook 的 API),
 
 ```bash
 # 環境變數放 packages/stats/.env(已被 gitignore):
-#   WORKER_URL / ADMIN_TOKEN / BMC_WEBHOOK_SECRET
+#   WORKER_URL(= https://stats.iosoftware.ai)/ ADMIN_TOKEN / BMC_WEBHOOK_SECRET
 pnpm license:test  -- membership.started you@example.com   # 送簽好章的假 webhook,驗整條線
 pnpm license:issue -- "某贊助者" 2026-09-01                # 手動發一張碼(月費填到期日)
 pnpm license:reset -- PAL-XXXX-XXXX-XXXX                    # 解綁,讓贊助者換機
 ```
 
-## 之後改 schema / 重新部署
+## 之後改 schema
 
-```bash
-pnpm db:schema   # schema.sql 全部是 IF NOT EXISTS,可重複執行
-pnpm deploy
-```
-
-> 若 `licenses` 表已建過,加 email/source 兩欄要手動 ALTER(見 schema.sql 內註解)。
+schema.sql 全部是 IF NOT EXISTS,服務每次開機都會套用,改完重新部署即可(見上方「部署」)。
+既有表要加欄位得另外 ALTER(用 `zeabur service exec` 跑 node:sqlite),改之前先 `pnpm db:backup`。

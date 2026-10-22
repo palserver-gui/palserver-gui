@@ -2,19 +2,23 @@
   "name": "@palserver/stats",
   "version": "2.0.0-alpha.0",
   "private": true,
-  "description": "Anonymous usage stats collector (Cloudflare Worker + D1) for palserver GUI.",
+  "description": "Anonymous usage stats collector (Node + SQLite on Zeabur) for palserver GUI.",
   "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "db:schema": "wrangler d1 execute palserver-stats --remote --file=schema.sql",
+    "dev": "node --watch src/server.ts",
+    "start": "node src/server.ts",
+    "db:backup": "bash backup.sh",
     "license:test": "node manage.mjs test-webhook",
     "license:issue": "node manage.mjs issue",
     "license:reset": "node manage.mjs reset"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260620.0",
+    "@types/node": "^24.0.0",
     "typescript": "^5.7.2",
     "wrangler": "^4.24.0"
   }
