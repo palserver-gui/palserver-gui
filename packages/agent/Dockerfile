@@ -1,12 +1,12 @@
 # Builds the palserver agent (with the web UI bundled) into a single image.
-FROM node:22-alpine AS build
+FROM node:24.22.2-alpine AS build
 RUN corepack enable
 WORKDIR /app
 ENV CI=true
 COPY . .
 RUN pnpm install --frozen-lockfile && pnpm -r build
 
-FROM node:22-alpine
+FROM node:24.22.2-alpine
 RUN corepack enable
 WORKDIR /app
 COPY --from=build /app/package.json /app/pnpm-workspace.yaml /app/pnpm-lock.yaml ./
