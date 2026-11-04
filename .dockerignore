@@ -5,6 +5,8 @@
 .godot
 node_modules
 **/node_modules
+.pnpm-store
+**/.pnpm-store
 **/dist
 logs
 release

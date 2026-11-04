@@ -5,7 +5,7 @@
   "description": "Docker-based Palworld dedicated server management. Agent daemon + remote Web UI.",
   "author": "Dalufishe",
   "license": "PolyForm-Noncommercial-1.0.0",
-  "packageManager": "pnpm@11.10.0",
+  "packageManager": "pnpm@11.28.10",
   "engines": {
     "node": ">=20"
   },
