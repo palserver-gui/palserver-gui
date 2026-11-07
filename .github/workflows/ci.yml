@@ -1,13 +1,20 @@
-name: ci
-
+name: CI
 on:
+  pull_request:
   push:
     branches: [main]
-  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
+    name: Typecheck and build (workspace)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -15,6 +22,87 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
-      - run: pnpm build
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck (all packages, incl. stats)
+        run: pnpm typecheck
+      - name: Build
+        run: pnpm build
+
+  docker:
+    name: Docker build (stats)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: packages/stats
+          file: packages/stats/Dockerfile
+          push: false
+          cache-from: type=gha,scope=stats
+          cache-to: type=gha,mode=max,scope=stats
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks (changed commits)
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.28.0/gitleaks_8.28.0_linux_x64.tar.gz | tar -xz gitleaks
+          if [ -n "$BASE" ] && git cat-file -e "$BASE^{commit}" 2>/dev/null; then RANGE="$BASE..$GITHUB_SHA"; else RANGE="-1"; fi
+          ./gitleaks git --redact --no-banner --log-opts="$RANGE" .
+
+  promote:
+    name: Promote to production
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build, docker, secrets]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    concurrency:
+      group: promote-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fast-forward production
+        run: |
+          if git rev-parse -q --verify origin/production >/dev/null; then
+            if git merge-base --is-ancestor "$GITHUB_SHA" origin/production; then echo "production already contains $GITHUB_SHA"; exit 0; fi
+            git merge-base --is-ancestor origin/production "$GITHUB_SHA" || { echo "::error::production has commits that are not on main; promote by hand"; exit 1; }
+          fi
+          git push origin "$GITHUB_SHA:refs/heads/production"
+          echo "Promoted \`${GITHUB_SHA::7}\` to production" >> "$GITHUB_STEP_SUMMARY"
+
+  notify:
+    name: Notify failure
+    if: failure() && github.event_name == 'push'
+    needs: [build, docker, secrets, promote]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Post to Discord
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          MSG: ${{ github.event.head_commit.message }}
+          URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          [ -n "$WEBHOOK" ] || { echo "DISCORD_WEBHOOK_URL not set; skipping"; exit 0; }
+          jq -n --arg repo "$GITHUB_REPOSITORY" --arg sha "${GITHUB_SHA::7}" --arg msg "$(printf '%s' "$MSG" | head -n1 | cut -c1-200)" \
+                --arg actor "$GITHUB_ACTOR" --arg url "$URL" \
+            '{username: "mac-server-watchdog", allowed_mentions: {parse: []}, embeds: [{
+               title: ("CI FAILED · " + $repo), url: $url, color: 15844367,
+               description: ("**Not deployed** — this commit was not promoted to production.\n`" + $sha + "` " + $msg),
+               fields: [{name: "Author", value: $actor, inline: true}, {name: "Logs", value: ("[Open run](" + $url + ")"), inline: true}],
+               footer: {text: "GitHub Actions · CI gate"}, timestamp: (now | todate)}]}' \
+          | curl -fsS -H 'Content-Type: application/json' -d @- "$WEBHOOK"
