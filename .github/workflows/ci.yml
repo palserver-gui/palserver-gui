@@ -101,7 +101,7 @@ jobs:
           jq -n --arg repo "$GITHUB_REPOSITORY" --arg sha "${GITHUB_SHA::7}" --arg msg "$(printf '%s' "$MSG" | head -n1 | cut -c1-200)" \
                 --arg actor "$GITHUB_ACTOR" --arg url "$URL" \
             '{username: "mac-server-watchdog", allowed_mentions: {parse: []}, embeds: [{
-               title: ("🟡 CI FAILED · " + $repo), url: $url, color: 15844367,
+               title: ("CI FAILED · " + $repo), url: $url, color: 15844367,
                description: ("**Not deployed** — this commit was not promoted to production.\n`" + $sha + "` " + $msg),
                fields: [{name: "Author", value: $actor, inline: true}, {name: "Logs", value: ("[Open run](" + $url + ")"), inline: true}],
                footer: {text: "GitHub Actions · CI gate"}, timestamp: (now | todate)}]}' \
