@@ -22,7 +22,7 @@ website/
 │  ├─ index.html     「/」語言偵測導向頁(靜態主機用)
 │  └─ assets/        截圖與 io software logo
 ├─ next.config.mjs   output: 'export' + trailingSlash(產出 /zh/index.html)
-└─ zbpack.json       Zeabur:npm run build → out/
+└─ zbpack.json       Zeabur 雲端(zbpack)用:npm run build → out/(正式站改用 railpack,見「部署」)
 ```
 
 ## 加/改語言與文案
@@ -46,12 +46,16 @@ npm run build      # 產出 out/(純靜態,無需 Node 伺服器)
 npm run preview    # 用靜態伺服器預覽 out/
 ```
 
-## 部署到 Zeabur
+## 部署(Mac 上的自架 Zeabur)
 
-1. 到 [Zeabur](https://zeabur.com) → 建立 Project → **Deploy from GitHub** → 選這個 repo。
-2. 在該服務的 **Settings → Root Directory** 填 `website`。
-3. `zbpack.json` 已指定 `npm run build` + `output_dir: out`,會以**靜態站**方式 serve。
-4. 到 **Domains** 綁 `palserver-gui.iosoftware.ai`(SEO canonical 已指向此網域)。
+正式站 `palserver-gui.iosoftware.ai` 跑在 Mac mini 上的自架 Zeabur 開源版(管理介面只有 Tailscale 裝置開得到),
+是專案(namespace)`palserver-stats` 裡的 `website` 服務,跟統計後端 `packages/stats` 同一個專案:
+
+1. Build 用 **railpack**,contextDir `website`,跟 `production` 分支。Build 的環境變數
+   `RAILPACK_SPA_OUTPUT_DIR=out` 讓它把 `out/` 當**靜態站** serve(`zbpack.json` 是 Zeabur 雲端的設定,這裡用不到)。
+2. 網域 `palserver-gui.iosoftware.ai`(SEO canonical 已指向此網域):Cloudflare DNS 是指向 Cloudflare Tunnel
+   的 CNAME(Proxied),源站沒有公開 IP。
+3. 沒有資料(內容都在 git);壞了就回滾(Zeabur 介面 → 服務 → 重新啟動與回滾)或 revert。
 
 ## SEO 清單(已內建)
 
@@ -69,4 +73,5 @@ npm run preview    # 用靜態伺服器預覽 out/
 - 版面/結構:改 `components/` 下對應元件(文字一律走 props,不要寫死)。
 - 截圖:放 `public/assets/`,在元件裡以 `/assets/xxx.jpg` 引用(記得填實際寬高)。
 
-改完 push,Zeabur 會自動重新建置部署。
+改完 push(或合併 PR)到 `main`:GitHub Actions 的 `CI` 全部通過後,`promote` job 把 `production` 分支
+快轉到該 commit,Mac 上的 Builder 約 1 分鐘內自動重新建置、Keel 換上新版。CI 沒過就不會上線。
