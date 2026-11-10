@@ -10,6 +10,7 @@
  */
 
 import { createServer, type IncomingMessage } from "node:http";
+import { BlockList, isIP, isIPv6 } from "node:net";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -45,12 +46,27 @@ function openDatabase(): DatabaseSync {
   return db;
 }
 
-/** 來源 IP(只給節流用)。Zeabur 的入口代理會把連線來源附加在 X-Forwarded-For 最後一段;
- *  前面幾段是客戶端自己能偽造的,所以只信最後一段。 */
+/** 內網位址(私有網段與本機)。Tunnel 進來的請求,前一站是叢集裡的 cloudflared,落在這些網段。 */
+const INTERNAL = new BlockList();
+for (const [addr, bits] of [["10.0.0.0", 8], ["172.16.0.0", 12], ["192.168.0.0", 16], ["127.0.0.0", 8]] as const) {
+  INTERNAL.addSubnet(addr, bits, "ipv4");
+}
+INTERNAL.addSubnet("fc00::", 7, "ipv6");
+INTERNAL.addAddress("::1", "ipv6");
+const plainIp = (ip: string) => ip.replace(/^::ffff:(?=\d+\.)/, "");
+const isInternal = (ip: string) => isIP(ip) > 0 && INTERNAL.check(ip, isIPv6(ip) ? "ipv6" : "ipv4");
+
+/** 來源 IP(只給節流用)。入口代理會把前一站附加在 X-Forwarded-For 最後一段,前面幾段客戶端能偽造,所以只信最後一段。
+ *  請求經 Cloudflare Tunnel 進來時,最後一段是叢集內 cloudflared 的位址,真正的訪客在 CF-Connecting-IP;
+ *  只有前一站是內網位址時才採用它,從外部直接連進來的人自己加的不算。 */
 function clientIp(req: IncomingMessage): string {
   const xff = req.headers["x-forwarded-for"];
   const last = (Array.isArray(xff) ? xff.join(",") : xff ?? "").split(",").pop()?.trim();
-  return last || req.socket.remoteAddress || "unknown";
+  const peer = plainIp(last || req.socket.remoteAddress || "");
+  const raw = req.headers["cf-connecting-ip"];
+  const cf = plainIp((Array.isArray(raw) ? raw[0] : raw ?? "").trim());
+  if (isIP(cf) > 0 && isInternal(peer)) return cf;
+  return peer || "unknown";
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer | null> {
