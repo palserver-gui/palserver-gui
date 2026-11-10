@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
-# 把 Zeabur 上的 SQLite 拉回本機 data/(已 gitignore),並驗證完整性。
+# ⚠ 已失效(2026-11 起):這支是 Zeabur 雲端(東京)時期的腳本,下面寫死的服務/環境 id 與
+#   `npx zeabur service exec` 都已不存在,跑了只會失敗。服務現在在 Mac 上的自架 Zeabur
+#   (namespace palserver-stats),整個 /data volume 每天 03:45(UTC+8)由叢集的 vol-daily
+#   用 restic 備份到 Cloudflare R2(保留 7 個每日 + 4 個每週),見 README.md「備份與還原」。
+#   要手動拉一份,照同樣步驟改用 `kubectl -n palserver-stats exec deploy/palserver-stats -- node -e …`。
+#
+# (原說明)把 Zeabur 上的 SQLite 拉回本機 data/(已 gitignore),並驗證完整性。
 # 在容器裡先 VACUUM INTO 出一份一致的快照再 gzip;exec API 單次輸出到幾 MB 就會失敗,所以分段讀。
 # 用法:bash backup.sh   (需已 `npx zeabur@latest auth login`)
 set -euo pipefail

@@ -1,6 +1,6 @@
 # @palserver/stats — 匿名使用統計後端
 
-Node + SQLite(部署在 Zeabur 東京),收集 palserver GUI 的匿名使用統計(隱私原則見根目錄
+Node + SQLite(部署在 Mac 上的自架 Zeabur),收集 palserver GUI 的匿名使用統計(隱私原則見根目錄
 [PRIVACY.md](../../PRIVACY.md)),並彙總 GitHub Releases 下載數;同時負責贊助者識別碼與公開地圖快照。
 
 > 2026-10 從 Cloudflare Worker + D1 搬過來。處理邏輯([src/index.ts](src/index.ts))沒變,
@@ -17,31 +17,31 @@ Node + SQLite(部署在 Zeabur 東京),收集 palserver GUI 的匿名使用統�
 | `GET` | `/api/map/snapshot` | 公開讀取地圖快照(viewer 頁用) |
 | `POST` | `/api/map/unpublish` | 服主下架地圖快照 |
 
-## 部署(Zeabur)
+## 部署(Mac 上的自架 Zeabur)
 
 | 項目 | 值 |
 | --- | --- |
-| 伺服器 | Ming's Server(騰訊雲 Tokyo,43.167.172.26) |
-| Project | `palserver-stats`(`6ad99f2379815446417f79ce`) |
-| Service | `palserver-stats`(`6ad99f3241d0e9b6bfde82c3`) |
-| 網域 | `stats.iosoftware.ai`(正式)、`palserver-stats.zeabur.app` |
-| Volume | `data` 掛在 `/data`;DB 檔 `/data/palserver-stats.sqlite`(環境變數 `DB_PATH`) |
-| DNS | Cloudflare:`stats` A → `43.167.172.26`,**DNS only(灰雲)** |
+| 主機 | Mac mini 上的 Lima 虛擬機 `mac-a`(K3s 單節點 + Zeabur 開源版);管理介面只有 Tailscale 裝置開得到 |
+| 專案(namespace) | `palserver-stats`(同專案還有官網 `website`,見 [website/README.md](../../website/README.md)) |
+| Service | `palserver-stats`,Build 跟 `production` 分支、contextDir `packages/stats`、用這裡的 Dockerfile |
+| 網域 | `stats.iosoftware.ai`(沒有其他網域;雲端時期的 `palserver-stats.zeabur.app` 已停用) |
+| Volume | PVC `palserver-stats-data` 掛在 `/data`;DB 檔路徑由環境變數 `DB_PATH` 指定 |
+| DNS | Cloudflare:`stats` 是指向 Cloudflare Tunnel 的 CNAME(**Proxied,橘雲**);源站沒有公開 IP |
 
-> DNS 不能開 Cloudflare 代理(橘雲):節流用的來源 IP 取 Zeabur 入口附加在 `X-Forwarded-For` 的最後一段,
-> 前面多一層代理就會變成 Cloudflare 節點的 IP。直連東京也是這次搬家的目的(中國線路連 Cloudflare 不穩)。
+> 2026-11-06 從 Zeabur 雲端(東京主機 43.167.172.26)搬到 Mac。雲端時期 DNS 刻意用灰雲直連(中國線路連 Cloudflare
+> 不穩,節流也要靠入口代理附加的來源 IP);現在源站沒有公開 IP,流量一定經過 Cloudflare。真實來源 IP 在
+> `Cf-Connecting-Ip` 與 `X-Forwarded-For` 的第一段;[src/server.ts](src/server.ts) 的 `clientIp()` 仍照雲端時期的
+> 假設取 `X-Forwarded-For` 最後一段,在這個架構下拿到的是 Tunnel 連線端的內部 IP,節流等於所有人共用少數幾個 IP。
 
 Dockerfile 建置,零執行期依賴(Node 24 內建 `node:sqlite`,直接跑 `.ts`)。開機時自動套
 `schema.sql`(全是 `IF NOT EXISTS`),改 schema 後重新部署即可。
 
-**重新部署**:`zeabur deploy` 會把整個目錄打包上傳,`data/`(DB 備份)與 `.env` 不能跟著上去,
-所以從只含必要檔案的暫存目錄部署,且**一定要帶 `--service-id`**(不帶會多建一個新服務):
-
-```bash
-cd packages/stats
-tmp=$(mktemp -d) && cp -r Dockerfile .dockerignore package.json schema.sql src "$tmp/" && cd "$tmp"
-npx zeabur@latest deploy --project-id 6ad99f2379815446417f79ce --service-id 6ad99f3241d0e9b6bfde82c3 -i=false
-```
+**部署**:push(或合併 PR)到 `main` → GitHub Actions `CI` 全部通過 → `promote` job 把 `production`
+分支快轉到該 commit → Mac 上的 Zeabur Builder 約 1 分鐘內發現,建 arm64 映像 → Keel 換上新版。
+CI 沒過就不會上線。不用再手動上傳目錄(雲端時期的 `npx zeabur deploy` 與專案/服務 id 都已失效)。
+回滾:Zeabur 介面 → 服務 → 重新啟動與回滾,或
+`limactl shell mac-a -- sudo k3s kubectl -n palserver-stats set image deploy/palserver-stats palserver-stats=zot.zot.svc:5000/palserver-stats/palserver-stats:<舊 tag>`。
+log:Zeabur 介面,或 `limactl shell mac-a -- sudo k3s kubectl -n palserver-stats logs deploy/palserver-stats`。
 
 本機開發:`DB_PATH=./data/stats.sqlite pnpm dev`(預設埠 8080)。
 
@@ -50,8 +50,7 @@ npx zeabur@latest deploy --project-id 6ad99f2379815446417f79ce --service-id 6ad9
 
 ### 環境變數
 
-在 Zeabur 服務的 Variables 設定(`npx zeabur@latest variable update --id <service-id> -k "K=V" -y -i=false`,
-改完要 restart)。Git Bash 下設含 `/` 開頭的值要先 `export MSYS_NO_PATHCONV=1`,否則路徑會被改寫。
+在 Zeabur 介面(Mac)該服務的環境變數設定,存成 Secret `palserver-stats-env`;改完要重新啟動服務。
 
 | 變數 | 用途 |
 | --- | --- |
@@ -66,14 +65,17 @@ npx zeabur@latest deploy --project-id 6ad99f2379815446417f79ce --service-id 6ad9
 
 ### 備份與還原
 
-```bash
-pnpm db:backup   # = bash backup.sh:在容器裡 VACUUM INTO 快照 → gzip → 分段拉回 data/,驗 integrity 與筆數
-```
+- **每日自動備份**:叢集的 vol-daily 每天 03:45(UTC+8)用 restic 把整個 `palserver-stats-data` volume
+  備份到 Cloudflare R2 `restic/palserver-stats/`,保留 7 個每日 + 4 個每週。SQLite 是在線上直接複製,
+  極少數情況可能要改用前一天的快照。從 R2 還原的步驟在 Mac 的 `~/migration/docs/03-mac-a技術參考手冊.pdf`。
+- **`pnpm db:backup`(`backup.sh`)已不能用**:它寫死雲端時期的服務 id、走 `npx zeabur service exec`。
+  要手動留一份,做法一樣(容器裡 `VACUUM INTO` 快照 → gzip → 分段讀出),只是改用
+  `limactl shell mac-a -- sudo k3s kubectl -n palserver-stats exec deploy/palserver-stats -- node -e '…'`。
 
-搬家後沒有 D1 的 Time Travel 了,改 schema 或大動作前先跑一次。
+沒有 D1 的 Time Travel,改 schema 或大動作前先手動留一份。
 
 還原/搬家:把 SQL dump 放到一個暫時可下載的網址,設 `RESTORE_URL` 並把 `DB_PATH` 指到一個還不存在的檔名,
-restart 後服務會先匯入再開機(匯入到暫存檔、成功才改名,不會留下半套 DB)。
+重新啟動後服務會先匯入再開機(匯入到暫存檔、成功才改名,不會留下半套 DB)。
 
 ## 公開地圖快照
 
@@ -116,7 +118,7 @@ restart 後服務會先匯入再開機(匯入到暫存檔、成功才改名,不�
 > 新增 `trial_days` 欄位:舊 DB 需 `ALTER TABLE licenses ADD COLUMN trial_days INTEGER;`(見 schema.sql)。
 
 ```bash
-# 管理密鑰 = Zeabur 環境變數 ADMIN_TOKEN(本機副本在 .env)
+# 管理密鑰 = 服務的環境變數 ADMIN_TOKEN(本機副本在 .env)
 # 手動發一張碼(帶 expiresAt 即為月費;到期後 agent 重驗會鎖上)
 curl -X POST https://stats.iosoftware.ai/api/license/issue \
   -H "X-Admin-Token: <ADMIN_TOKEN>" -H "Content-Type: application/json" \
@@ -127,7 +129,7 @@ curl -X POST https://stats.iosoftware.ai/api/license/issue \
 
 1. BMC 開一個月費 **Membership** 方案。
 2. BMC 後台 → Webhooks 新增,URL 填 `https://stats.iosoftware.ai/api/license/bmc-webhook`,複製**簽章密鑰**。
-3. 在 Zeabur 設環境變數;Brevo(app.brevo.com)用來把碼 email 給贊助者(需先在 Brevo 驗證寄件者/網域):
+3. 在 Zeabur 介面設環境變數;Brevo(app.brevo.com)用來把碼 email 給贊助者(需先在 Brevo 驗證寄件者/網域):
    - `BMC_WEBHOOK_SECRET`:BMC 給的 webhook secret
    - `BREVO_API_KEY`:Brevo API key(SMTP & API → API Keys)
    - 選填 `BREVO_FROM_EMAIL` / `BREVO_FROM_NAME`(預設 palserver GUI <palserver-gui@iosoftware.ai>)
@@ -147,7 +149,7 @@ curl -X POST https://stats.iosoftware.ai/api/license/issue \
    - **Webhook URL** 填 `https://stats.iosoftware.ai/api/license/afdian-webhook`(可按「發送測試」,我方一律回 `{"ec":200}`;
      測試用的是假訂單號,驗不過屬正常、不會發碼,顯示成功即代表端點通)。
    - 記下 **user_id**、按「生成 Token」拿 **API Token**。
-2. 在 Zeabur 設環境變數 `AFDIAN_USER_ID`(開發者頁的 user_id)與 `AFDIAN_TOKEN`(開發者頁生成的 API Token)。
+2. 在 Zeabur 介面設環境變數 `AFDIAN_USER_ID`(開發者頁的 user_id)與 `AFDIAN_TOKEN`(開發者頁生成的 API Token)。
    `AFDIAN_PLAN_IDS`(只認的包月方案 plan_id,逗號分隔)與 `AFDIAN_API_BASE`(舊域 afdian.net 已停用)
    的預設值在 `src/server.ts`,目前是 ¥60/月方案與 `https://ifdian.net`。
 
@@ -172,4 +174,6 @@ pnpm license:reset -- PAL-XXXX-XXXX-XXXX                    # 解綁,讓贊助�
 ## 之後改 schema
 
 schema.sql 全部是 IF NOT EXISTS,服務每次開機都會套用,改完重新部署即可(見上方「部署」)。
-既有表要加欄位得另外 ALTER(用 `zeabur service exec` 跑 node:sqlite),改之前先 `pnpm db:backup`。
+既有表要加欄位得另外 ALTER:在容器裡用 node:sqlite 跑,例如
+`limactl shell mac-a -- sudo k3s kubectl -n palserver-stats exec deploy/palserver-stats -- node -e '…'`。
+改之前先確認有最近的備份(見上方「備份與還原」)。
