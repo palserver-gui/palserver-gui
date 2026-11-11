@@ -94,6 +94,14 @@ export function readFile(root: string, relPath: string): FileContent {
   return { path: relPath, content: fs.readFileSync(file, "utf8") };
 }
 
+/** Resolve a regular file for binary download without reading it into memory. */
+export function downloadFilePath(root: string, relPath: string): string {
+  const file = resolveInRoot(root, relPath);
+  const stat = fs.statSync(file, { throwIfNoEntry: false });
+  if (!stat?.isFile()) throw badRequest("檔案不存在", 404);
+  return file;
+}
+
 export function writeFile(root: string, relPath: string, content: string): void {
   const file = resolveInRoot(root, relPath);
   if (!isTextFile(path.basename(file))) throw badRequest("只能編輯文字檔");
