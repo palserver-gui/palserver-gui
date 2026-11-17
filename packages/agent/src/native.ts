@@ -7,7 +7,7 @@ import extractZip from "extract-zip";
 import { buildLaunchArgs, type InstallError, type InstanceStats, type InstanceStatus, type WorldSettings } from "@palserver/shared";
 import type { DriverContext, ServerDriver } from "./driver.js";
 import type { InstanceRecord } from "./store.js";
-import { renderPalWorldSettingsIni, diffIniAgainstSnapshot } from "./settings-ini.js";
+import { renderPalWorldSettingsIni, diffIniAgainstSnapshot, WORLD_BOOTED_FILE } from "./settings-ini.js";
 import { mergeEnginePatch } from "./engine-ini-merge.js";
 import { rest } from "./restapi.js";
 import { emitAgentEvent } from "./events.js";
@@ -475,6 +475,8 @@ const worldIniPath = (rec: InstanceRecord, ctx: DriverContext) =>
   path.join(serverRoot(rec, ctx), "Pal", "Saved", "Config", configPlatformDir(rec), "PalWorldSettings.ini");
 /** 「agent 上次寫進 PalWorldSettings.ini 的內容」快照,用來偵測使用者的手動編輯。 */
 const worldAppliedPath = (ctx: DriverContext) => path.join(ctx.instanceDir, "world-applied.json");
+/** 「伺服器這次開機時套用的設定」快照:遊戲關機會把開機值寫回 ini,比對時要排除。 */
+const worldBootedPath = (ctx: DriverContext) => path.join(ctx.instanceDir, WORLD_BOOTED_FILE);
 
 /** 也供 route 層在世界設定 PUT 時即時落檔(native),讓檔案跟 store 同步。 */
 export function writeWorldIni(rec: InstanceRecord, ctx: DriverContext): void {
@@ -506,6 +508,7 @@ export function detectManualIniEdits(rec: InstanceRecord, ctx: DriverContext): P
     (p) => fs.readFileSync(p, "utf8"),
     worldIniPath(rec, ctx),
     worldAppliedPath(ctx),
+    worldBootedPath(ctx),
   );
 }
 
@@ -811,6 +814,12 @@ function startReadyProbe(rec: InstanceRecord): void {
 
 async function spawnServer(rec: InstanceRecord, ctx: DriverContext): Promise<void> {
   writeIni(rec, ctx);
+  // 記下這次開機用的設定:遊戲關機時會把它們寫回 ini,下次開機比對時才不會誤判成手動編輯。
+  try {
+    fs.writeFileSync(worldBootedPath(ctx), JSON.stringify(rec.settings));
+  } catch {
+    /* 存不進去頂多退回舊行為,不致命 */
+  }
   const root = serverRoot(rec, ctx);
 
   // PalDefender's plain Source RCON path cannot carry Unicode reliably.

@@ -113,7 +113,7 @@ import { licenseStatus, setLicenseKey, clearLicenseKey, featureEnabled } from ".
 import { giveCustomPal } from "./pals.js";
 import { applyUpdate, getUpdateStatus, setUpdatePrefs, type UpdateOps } from "./self-update.js";
 import { readFileInPod } from "./k8s-files.js";
-import { diffIniTextAgainstSnapshot } from "./settings-ini.js";
+import { diffIniTextAgainstSnapshot, WORLD_BOOTED_FILE } from "./settings-ini.js";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -938,9 +938,11 @@ export function registerRoutes(
     const ctx = ctxOf(rec);
     const ini = await readFileInPod(rec, `Pal/Saved/Config/${configPlatformDir(rec)}/PalWorldSettings.ini`).catch(() => null);
     if (ini === null) return {};
-    const snapshotPath = path.join(ctx.instanceDir, "world-applied.json");
-    const snapshot = fs.existsSync(snapshotPath) ? fs.readFileSync(snapshotPath, "utf8") : null;
-    return diffIniTextAgainstSnapshot(ini, snapshot);
+    const readSnapshot = (name: string) => {
+      const p = path.join(ctx.instanceDir, name);
+      return fs.existsSync(p) ? fs.readFileSync(p, "utf8") : null;
+    };
+    return diffIniTextAgainstSnapshot(ini, readSnapshot("world-applied.json"), readSnapshot(WORLD_BOOTED_FILE));
   };
   const reconcileWorldIni = async (rec: InstanceRecord): Promise<InstanceRecord> => {
     const patch = await worldIniPatch(rec);

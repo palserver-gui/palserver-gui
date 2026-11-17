@@ -75,13 +75,29 @@ export function parsePalWorldSettingsIni(ini: string): Partial<WorldSettings> {
   return result as Partial<WorldSettings>;
 }
 
+/** 「伺服器這次開機時套用的設定」快照檔名(instanceDir 下),與 world-applied.json 並列。
+ *  Palworld 關機時會把「開機時讀進記憶體的設定」寫回 PalWorldSettings.ini;
+ *  有這份快照才分得出「遊戲寫回的開機值」與「使用者手動改的值」。 */
+export const WORLD_BOOTED_FILE = "world-booted.json";
+
+function parseSnapshot(raw: string | null): Record<string, unknown> | null {
+  try {
+    const j = raw === null ? null : (JSON.parse(raw) as unknown);
+    return j && typeof j === "object" ? (j as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** 讀 ini 檔並與「agent 上次寫入的快照(JSON)」比對,回傳使用者手動改動的 patch。
  *  native 與 docker 共用(兩者的 ini/快照路徑不同,由呼叫端給)。
- *  沒有快照 = 首次/採用既有安裝 → 整份尊重現有檔案;ini 不存在 → 空 patch。 */
+ *  沒有快照 = 首次/採用既有安裝 → 整份尊重現有檔案;ini 不存在 → 空 patch。
+ *  bootedPath(選填)= 伺服器開機時套用的設定,用來排除遊戲關機時寫回的開機值。 */
 export function diffIniAgainstSnapshot(
   readFileSync: (p: string) => string,
   iniPath: string,
   snapshotPath: string,
+  bootedPath?: string,
 ): Partial<WorldSettings> {
   let iniRaw: string;
   try {
@@ -89,32 +105,38 @@ export function diffIniAgainstSnapshot(
   } catch {
     return {};
   }
-  let snapshotRaw: string | null = null;
-  try {
-    snapshotRaw = readFileSync(snapshotPath);
-  } catch {
-    /* 沒有快照 */
-  }
-  return diffIniTextAgainstSnapshot(iniRaw, snapshotRaw);
+  const readOptional = (p: string | undefined): string | null => {
+    if (!p) return null;
+    try {
+      return readFileSync(p);
+    } catch {
+      return null; // 沒有快照
+    }
+  };
+  return diffIniTextAgainstSnapshot(iniRaw, readOptional(snapshotPath), readOptional(bootedPath));
 }
 
-/** Same reconciliation for remote runtimes whose files are not host paths. */
+/** Same reconciliation for remote runtimes whose files are not host paths.
+ *
+ *  A key counts as a manual edit only when the ini value differs from what the agent
+ *  last wrote (snapshot) AND from what the running server booted with (booted).
+ *  Palworld rewrites PalWorldSettings.ini with its boot-time settings on shutdown, so
+ *  without the second check a setting saved in the GUI while the server runs is
+ *  reverted on the next restart (the write-back looks like a manual edit). */
 export function diffIniTextAgainstSnapshot(
   iniRaw: string,
   snapshotRaw: string | null,
+  bootedRaw: string | null = null,
 ): Partial<WorldSettings> {
   const fileSettings = parsePalWorldSettingsIni(iniRaw);
-  let last: Record<string, unknown> | null = null;
-  try {
-    const j = snapshotRaw === null ? null : JSON.parse(snapshotRaw) as unknown;
-    if (j && typeof j === "object") last = j as Record<string, unknown>;
-  } catch {
-    /* 沒有快照 */
-  }
+  const last = parseSnapshot(snapshotRaw);
   if (!last) return fileSettings;
+  const booted = parseSnapshot(bootedRaw);
   const patch: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(fileSettings)) {
-    if (last[k] !== v) patch[k] = v;
+    if (last[k] === v) continue;
+    if (booted && booted[k] === v) continue; // 遊戲關機寫回的開機值,不是手動編輯
+    patch[k] = v;
   }
   return patch as Partial<WorldSettings>;
 }
