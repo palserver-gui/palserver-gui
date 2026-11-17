@@ -399,7 +399,7 @@ export const k8sDriver: ServerDriver = {
     // directly (not env vars). PVC = /palworld (entire install persisted).
     // DepotDownloader runs first in entrypoint, then we write ini over the default.
     if (rec.runtime === "wine") {
-      const { renderPalWorldSettingsIni } = await import("./settings-ini.js");
+      const { renderPalWorldSettingsIni, WORLD_BOOTED_FILE } = await import("./settings-ini.js");
       const { writeFileInPod, makeDirInPod } = await import("./k8s-files.js");
       const iniContent = renderPalWorldSettingsIni(rec.settings);
       const iniDir = `Pal/Saved/Config/${configPlatformDir(rec)}`;
@@ -424,6 +424,8 @@ export const k8sDriver: ServerDriver = {
       // agent instance state.
       fs.mkdirSync(ctx.instanceDir, { recursive: true });
       fs.writeFileSync(path.join(ctx.instanceDir, "world-applied.json"), JSON.stringify(rec.settings));
+      // These are also the settings the server boots with; it writes them back on shutdown.
+      fs.writeFileSync(path.join(ctx.instanceDir, WORLD_BOOTED_FILE), JSON.stringify(rec.settings));
       wineRestartRequired = !podWasRunning;
     } else {
       const { applyEnvPatchK8s } = await import("./k8s-env-patch.js");

@@ -9,7 +9,7 @@ import { CONTAINER_PREFIX, IMAGES, IMAGES_ARM64, IMAGES_WINE, INSTANCE_LABEL } f
 import { mergeEnginePatch } from "./engine-ini-merge.js";
 import type { InstanceRecord } from "./store.js";
 import { configPlatformDir } from "./platform.js";
-import { diffIniAgainstSnapshot, renderPalWorldSettingsIni } from "./settings-ini.js";
+import { diffIniAgainstSnapshot, renderPalWorldSettingsIni, WORLD_BOOTED_FILE } from "./settings-ini.js";
 import { imageDigest, registryImageDigest } from "./image-digest.js";
 
 export const docker = new Docker(); // default: /var/run/docker.sock
@@ -127,7 +127,17 @@ export function detectManualIniEdits(instanceDir: string): Partial<WorldSettings
     (p) => fs.readFileSync(p, "utf8"),
     path.join(instanceDir, "config", "PalWorldSettings.ini"),
     path.join(instanceDir, "world-applied.json"),
+    path.join(instanceDir, WORLD_BOOTED_FILE),
   );
+}
+
+/** 記下容器這次開機用的設定(遊戲關機會把它們寫回 ini;見 diffIniTextAgainstSnapshot)。 */
+function writeBootedSnapshot(instanceDir: string, settings: WorldSettings): void {
+  try {
+    fs.writeFileSync(path.join(instanceDir, WORLD_BOOTED_FILE), JSON.stringify(settings));
+  } catch {
+    /* 存不進去頂多退回舊行為,不致命 */
+  }
 }
 
 /** Re-apply managed Engine.ini tweaks into the bind-mounted saved dir before
@@ -240,6 +250,7 @@ export async function createContainer(
 
 export async function startInstance(rec: InstanceRecord, instanceDir: string): Promise<void> {
   writeConfig(instanceDir, rec.settings);
+  writeBootedSnapshot(instanceDir, rec.settings);
   applyEngineIniDocker(rec, instanceDir);
 
   // image 不存在時觸發背景 build/pull(IIFE),立刻回 installing 狀態;
