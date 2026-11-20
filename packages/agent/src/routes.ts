@@ -114,6 +114,7 @@ import { giveCustomPal } from "./pals.js";
 import { applyUpdate, getUpdateStatus, setUpdatePrefs, type UpdateOps } from "./self-update.js";
 import { readFileInPod } from "./k8s-files.js";
 import { diffIniTextAgainstSnapshot } from "./settings-ini.js";
+import { TeleportBodySchema } from "./teleport-input.js";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -1782,13 +1783,7 @@ export function registerRoutes(
       return reply.code(409).send({ error: "需要先安裝 PalDefender 才能使用傳送" });
     }
     requireRcon(rec);
-    const { source, target } = z
-      .object({
-        source: z.string().trim().regex(/^[A-Za-z0-9_]+$/).max(128),
-        // 目標:玩家 UserId 或座標「x y [z]」(允許數字、負號、小數、空白)。
-        target: z.string().trim().min(1).max(128).regex(/^[A-Za-z0-9_.\- ]+$/),
-      })
-      .parse(req.body);
+    const { source, target } = TeleportBodySchema.parse(req.body);
 
     // 若 target 只有 X Y 兩軸（不含 Z），判斷是否為遠距離傳送。
     // 直線距離 >= 250 時做兩次 tp，讓地形串流載入後第二次 tp 才正確著地。
