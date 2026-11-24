@@ -3,6 +3,7 @@ import type { DirEntry, FileContent } from "@palserver/shared";
 import type { InstanceRecord } from "./store.js";
 import {
   deletePathInPod,
+  downloadFileInPod,
   execInPod,
   listDirInPod,
   makeDirInPod,
@@ -70,6 +71,14 @@ export async function readFileInPodBrowser(rec: InstanceRecord, relPath: string)
   const stat = await statInPod(rec, full);
   if (stat.size > MAX_EDIT_BYTES) throw badRequest("檔案過大,無法在編輯器中開啟");
   return { path: relPath, content: await readFileInPod(rec, relPath) };
+}
+
+/** Download raw file bytes after applying the same Pod-root path guard. */
+export async function downloadFileInPodBrowser(rec: InstanceRecord, relPath: string): Promise<Buffer> {
+  const full = assertRelative(relPath, false);
+  const isFile = await execInPod(rec, ["test", "-f", full]).then(() => true).catch(() => false);
+  if (!isFile) throw badRequest("檔案不存在", 404);
+  return downloadFileInPod(rec, relPath);
 }
 
 export async function writeFileInPodBrowser(rec: InstanceRecord, relPath: string, content: string): Promise<void> {
