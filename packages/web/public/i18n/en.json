@@ -2155,5 +2155,12 @@
   "存檔快照裡找不到這個據點 — 到公會分頁「從存檔刷新」重掃一次。": "This base isn't in the save snapshot — open the Guild tab and use \"Refresh from Save\".",
   "測試版(Beta)可能不穩定,但含較新的功能(例如玩家細節 API)。\n\n確定要安裝最新測試版嗎?": "Beta builds can be unstable but include newer features (such as the player detail API).\n\nInstall the latest beta?",
   "雕像類型": "Effigy type",
-  "摧毀據點無法復原。\n\n確定要執行 findbases {argv} 嗎?": "Destroying a base cannot be undone.\n\nRun findbases {argv}?"
+  "摧毀據點無法復原。\n\n確定要執行 findbases {argv} 嗎?": "Destroying a base cannot be undone.\n\nRun findbases {argv}?",
+  "「玩家細節(查看帕魯/背包)」需要 v1.8.0 以上的測試版才支援。": "Player detail (Pals/inventory viewer) needs beta v1.8.0 or later.",
+  "重啟伺服器後生效": "Takes effect after the server restarts",
+  "請先啟動伺服器": "Start the server first",
+  "伺服器未運行:docker/k8s 的模組安裝與停用需要容器在運行中才能傳輸檔案,請先啟動伺服器。": "Server is not running: installing or toggling mods on docker/k8s needs the container up so files can be transferred. Start the server first.",
+  "已停用,重啟伺服器後生效。": "Disabled. Takes effect after the server restarts.",
+  "已啟用,重啟伺服器後生效。": "Enabled. Takes effect after the server restarts.",
+  "安裝、更新或停用後,重啟伺服器才會生效。": "Installs, updates and toggles take effect after the server restarts."
 }

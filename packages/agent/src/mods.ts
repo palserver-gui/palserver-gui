@@ -8,7 +8,7 @@ import type { InstanceRecord } from "./store.js";
 import { serverPlatform } from "./platform.js";
 import { serverRoot } from "./native.js";
 import * as dockerOps from "./docker.js";
-import { execInPod, readFileInPod, writeFileBytesInPod, makeDirInPod, deletePathInPod } from "./k8s-files.js";
+import { execInPod, readFileInPod, writeFileBytesInPod, makeDirInPod, deletePathInPod, resolvePodPath } from "./k8s-files.js";
 
 /**
  * Mod management for native instances (the v1 headline feature, rebuilt):
@@ -64,6 +64,8 @@ const CONTAINER_INSTALL_DIR = "/palworld";
 const CONTAINER_WIN64_DIR = `${CONTAINER_INSTALL_DIR}/Pal/Binaries/Win64`;
 /** k8s writeFileInPod 需要 resolvePodPath 相對路徑（會加 /palworld 前綴）。 */
 const POD_WIN64_REL = "Pal/Binaries/Win64";
+/** 安裝 marker 在容器/Pod 內的位置(與 native 的 win64 目錄同構)。 */
+const POD_MARKER_REL = "Pal/Binaries/Win64/.palserver-mods.json";
 
 /** docker/k8s 下用 exec 偵測檔案是否存在。 */
 async function fileExistsInRuntime(rec: InstanceRecord, filePath: string): Promise<boolean> {
@@ -150,6 +152,63 @@ const DEFAULT_MOD_FILES: Record<ModComponent, string[]> = {
 
 const DISABLED_SUFFIX = ".palserver-disabled";
 
+/** 改名後的檔名(尾碼只加一次)。 */
+export function disabledName(name: string): string {
+  return name.endsWith(DISABLED_SUFFIX) ? name : name + DISABLED_SUFFIX;
+}
+
+/** k8s/docker 共用的 mv argv:把 rel(相對容器根,如 Pal/Binaries/Win64/X.dll)
+ *  在啟用/停用間改名。argv 原樣進容器,路徑用 /palworld 絕對形式。 */
+export function renameCommandArgs(rel: string, enable: boolean): string[] {
+  const from = enable ? disabledName(rel) : rel;
+  const to = enable ? rel : disabledName(rel);
+  return ["mv", resolvePodPath(from), resolvePodPath(to)];
+}
+
+/** 「目前是否啟用」的三態計算(active 優先,與 native componentState 同構);
+ *  兩者皆無 = 未安裝(null)。 */
+export function enabledFromFiles(active: boolean, disabled: boolean): boolean | null {
+  if (active) return true;
+  return disabled ? false : null;
+}
+
+/** runtime 缺席錯誤判定:k8s = podOf 的「找不到運行中的 game-server Pod」;
+ *  docker = findContainer 的「找不到容器」,或對停止/暫停容器 exec 的 409。 */
+export function isPodMissingError(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  if (e.message.includes("找不到運行中的 game-server Pod") || e.message.includes("找不到容器")) {
+    return true;
+  }
+  // dockerode/docker-modem 對停止/暫停容器 exec 以 409 回報(訊息形如
+  // "(HTTP code 409) container stopped/paused - Container <id> is not running",
+  // 帶 statusCode:409)。exec 路徑上 docker 的 409 只有缺席/未運行兩種,
+  // 以 statusCode 判定誤配面可控。
+  const sc = (e as Error & { statusCode?: number }).statusCode;
+  return sc === 409 || /is not running/i.test(e.message);
+}
+
+/** Pod/容器缺席時的人話 409:讓使用者知道下一步是啟動伺服器,而非 exec 技術錯誤。 */
+export function podMissingError(backend: "docker" | "k8s"): Error {
+  const what = backend === "docker" ? "容器未運行" : "伺服器未運行";
+  return Object.assign(new Error(`${what}:請先啟動伺服器再管理模組`), { statusCode: 409 });
+}
+
+/** 容器/Pod 內的 exec 檔案存在性——與 fileExistsInRuntime 不同,缺席時**不吞錯**:
+ *  runtime 缺席錯誤轉 409 人話上拋,其餘 exec 錯誤視為「檔案不存在」。
+ *  docker 腳必須用 exit-code 檢查版(execInContainerChecked):無檢查版的
+ *  `test -f` 結果會被無視,一切檔案「都存在」→ 停用/啟用假成功。 */
+async function execFileExistsInRuntime(rec: InstanceRecord, absPath: string): Promise<boolean> {
+  const args = ["test", "-f", absPath];
+  try {
+    if (rec.backend === "docker") await dockerOps.execInContainerChecked(rec, args);
+    else await execInPod(rec, args);
+    return true;
+  } catch (e) {
+    if (isPodMissingError(e)) throw podMissingError(rec.backend === "docker" ? "docker" : "k8s");
+    return false;
+  }
+}
+
 /** 各元件「停用時改名」的目標 DLL(相對 win64)。 */
 const DISABLE_TARGETS: Record<ModComponent, string[]> = {
   ue4ss: ["UE4SS.dll", "ue4ss/UE4SS.dll", "UE4SS/UE4SS.dll"],
@@ -168,11 +227,30 @@ function componentState(root: string, component: ModComponent): { installed: boo
 
 /** 暫時停用/重新啟用(不刪任何檔):把主 DLL 改名加 .palserver-disabled 尾碼。
  *  改版日的安全退路 —— 移除會連使用者的 Lua 模組一起刪,停用不會。
- *  僅支援 native Windows(檔案就在本機);需伺服器停止(DLL 鎖定)。 */
-export function setModEnabled(rec: InstanceRecord, ctx: DriverContext, component: ModComponent, enabled: boolean): void {
+ *  native Windows:檔案在本機,需伺服器停止(DLL 鎖定),改名後下次啟動生效。
+ *  docker/k8s:檔案在容器/Pod 內,需伺服器**運行中**(exec 改名),同樣重啟後生效。 */
+export async function setModEnabled(
+  rec: InstanceRecord,
+  ctx: DriverContext,
+  component: ModComponent,
+  enabled: boolean,
+): Promise<void> {
+  // docker/k8s: exec into the container/Pod (PVC 持久,改名跨 Pod 重啟保留)。
+  if (rec.backend === "docker" || rec.backend === "k8s") {
+    for (const rel of DISABLE_TARGETS[component]) {
+      // rel 是「相對 win64」路徑;renameCommandArgs 的契約是 Pod 相對路徑(帶
+      // Pal/Binaries/Win64 前綴),缺這層會解析成 /palworld/PalDefender.dll。
+      const podRel = `${POD_WIN64_REL}/${rel}`;
+      const active = await execFileExistsInRuntime(rec, `${CONTAINER_WIN64_DIR}/${rel}`);
+      const disabled = await execFileExistsInRuntime(rec, `${CONTAINER_WIN64_DIR}/${rel}${DISABLED_SUFFIX}`);
+      if (enabled && disabled) await execRenameInRuntime(rec, renameCommandArgs(podRel, true));
+      if (!enabled && active) await execRenameInRuntime(rec, renameCommandArgs(podRel, false));
+    }
+    return;
+  }
   if (rec.backend !== "native" || serverPlatform(rec) !== "windows") {
     throw Object.assign(
-      new Error("停用/啟用僅支援原生模式的 Windows 伺服器(含 Linux 上以 Wine 執行的 Windows binary)"),
+      new Error("停用/啟用僅支援原生模式或 docker/k8s 後端的 Windows 伺服器(含 Linux 上以 Wine 執行的 Windows binary)"),
       { statusCode: 409 },
     );
   }
@@ -183,6 +261,40 @@ export function setModEnabled(rec: InstanceRecord, ctx: DriverContext, component
     if (enabled && fs.existsSync(off)) fs.renameSync(off, active);
     if (!enabled && fs.existsSync(active)) fs.renameSync(active, off);
   }
+}
+
+/** 容器/Pod 內改名;runtime 缺席錯誤轉 409 人話。docker 用 exit-code 檢查版,
+ *  mv 失敗(如目標不存在)如實上拋,不假成功。 */
+async function execRenameInRuntime(rec: InstanceRecord, args: string[]): Promise<void> {
+  try {
+    if (rec.backend === "docker") await dockerOps.execInContainerChecked(rec, args);
+    else await execInPod(rec, args);
+  } catch (e) {
+    if (isPodMissingError(e)) throw podMissingError(rec.backend === "docker" ? "docker" : "k8s");
+    throw e;
+  }
+}
+
+/** marker 讀寫的 backend 分流:docker 走 execInContainer base64(寫)／cat(讀),
+ *  k8s 走 k8s-files 專用 API(writeFileBytesInPod/readFileInPod 走 podOf,不支援 docker)。 */
+async function writeMarkerInRuntime(rec: InstanceRecord, rel: string, data: Buffer): Promise<void> {
+  if (rec.backend === "docker") {
+    const b64 = data.toString("base64");
+    await dockerOps.execInContainerChecked(rec, [
+      "sh",
+      "-c",
+      `echo '${b64}' | base64 -d > '${resolvePodPath(rel)}'`,
+    ]);
+  } else {
+    await writeFileBytesInPod(rec, rel, data);
+  }
+}
+
+async function readMarkerInRuntime(rec: InstanceRecord, rel: string): Promise<string> {
+  if (rec.backend === "docker") {
+    return await dockerOps.execInContainerChecked(rec, ["cat", resolvePodPath(rel)]);
+  }
+  return await readFileInPod(rec, rel);
 }
 
 export async function getModsStatus(rec: InstanceRecord, ctx: DriverContext): Promise<ModsStatus> {
@@ -202,19 +314,60 @@ export async function getModsStatus(rec: InstanceRecord, ctx: DriverContext): Pr
   }
 
   // docker/k8s: 容器/Pod 內 exec 偵測（host fs 看不到容器內的 Win64 目錄）。
+  // Pod 缺席（伺服器停機）時優雅降級：回 supported:false＋人話 reason，GUI 據此
+  // 顯示「請先啟動伺服器」引導——不擲 500 打碎整頁。
   if (rec.backend === "docker" || rec.backend === "k8s") {
-    const paldefenderInstalled = await fileExistsInRuntime(rec, `${CONTAINER_WIN64_DIR}/PalDefender.dll`);
-    const ue4ssInstalled =
-      await fileExistsInRuntime(rec, `${CONTAINER_WIN64_DIR}/ue4ss/UE4SS.dll`) ||
-      await fileExistsInRuntime(rec, `${CONTAINER_WIN64_DIR}/UE4SS.dll`);
-    return {
-      supported: true,
-      ue4ss: { installed: ue4ssInstalled, version: null },
-      paldefender: { installed: paldefenderInstalled, version: null },
+    const empty: ModsStatus = {
+      supported: false,
+      serverInstalled: true,
+      ue4ss: { installed: false, version: null },
+      paldefender: { installed: false, version: null },
       luaMods: [],
       luaModsDir: null,
       pakMods: [],
     };
+    try {
+      const pdActive = await execFileExistsInRuntime(rec, `${CONTAINER_WIN64_DIR}/PalDefender.dll`);
+      const pdDisabled = await execFileExistsInRuntime(
+        rec,
+        `${CONTAINER_WIN64_DIR}/PalDefender.dll.palserver-disabled`,
+      );
+      const ue4ssActive =
+        (await execFileExistsInRuntime(rec, `${CONTAINER_WIN64_DIR}/ue4ss/UE4SS.dll`)) ||
+        (await execFileExistsInRuntime(rec, `${CONTAINER_WIN64_DIR}/UE4SS.dll`));
+      const ue4ssDisabled =
+        (await execFileExistsInRuntime(rec, `${CONTAINER_WIN64_DIR}/ue4ss/UE4SS.dll.palserver-disabled`)) ||
+        (await execFileExistsInRuntime(rec, `${CONTAINER_WIN64_DIR}/UE4SS.dll.palserver-disabled`));
+      const pdEnabled = enabledFromFiles(pdActive, pdDisabled);
+      const ue4ssEnabled = enabledFromFiles(ue4ssActive, ue4ssDisabled);
+      // marker 在 Pod 內（install 時寫入）；讀不到（舊安裝/首次）回 null。
+      let marker: ModsMarker = {};
+      try {
+        marker = JSON.parse(await readMarkerInRuntime(rec, POD_MARKER_REL)) as ModsMarker;
+      } catch { /* 無 marker = 舊安裝或 Pod 缺席路徑已被上層轉譯 */ }
+      return {
+        supported: true,
+        serverInstalled: true,
+        ue4ss: {
+          installed: ue4ssEnabled !== null,
+          version: marker.ue4ss ?? null,
+          enabled: ue4ssEnabled ?? undefined,
+        },
+        paldefender: {
+          installed: pdEnabled !== null,
+          version: marker.paldefender ?? null,
+          enabled: pdEnabled ?? undefined,
+        },
+        luaMods: [],
+        luaModsDir: null,
+        pakMods: [],
+      };
+    } catch (e) {
+      if (isPodMissingError(e) || (e instanceof Error && e.message.includes("請先啟動伺服器"))) {
+        return { ...empty, supported: false, reason: (e as Error).message };
+      }
+      throw e;
+    }
   }
 
   const root = serverRoot(rec, ctx);
@@ -548,6 +701,16 @@ async function installComponentInRuntime(
 
   // Clean up host temp.
   fs.rmSync(tmpDir, { recursive: true, force: true });
+
+  // 寫安裝 marker 進容器/Pod(與 native 同構,供 status 回報 version 顯示「有新版」)。
+  // 先讀後寫合併,保留另一元件的欄位。
+  let marker: ModsMarker = {};
+  try {
+    marker = JSON.parse(await readMarkerInRuntime(rec, POD_MARKER_REL)) as ModsMarker;
+  } catch { /* 無 marker = 首次安裝 */ }
+  marker[component] = version;
+  marker.files = { ...(marker.files ?? {}), [component]: files };
+  await writeMarkerInRuntime(rec, POD_MARKER_REL, Buffer.from(JSON.stringify(marker, null, 2)));
   return { version };
 }
 
